@@ -42,7 +42,7 @@ class A:
                         self.data += value
 ```
 
-となってしまいます。（古い Emacs では M-x indent-region でも同様でした...）
+となってしまいます。（古い Emacs では <code>M-x indent-region</code> でも同様でした...）
 
 そこで、ソース(※1) にブロック終端を明示して(※2)
 
@@ -100,18 +100,16 @@ class B:
 ブロック終端の削除では pass/continue/return の行に空白とキーワード以外があると削除されません。
 
 
-# py-blockend マイナーモード (py-blockend.el)
+# Emacs : py-blockend マイナーモード
 
-pyblockend.py をバックエンドとして動作します。
-これをカスタマイズ変数の <code>py-blockend-command</code> で実行できるようにしてください。
-
-.emacs で py-blockend.el の読み込みとフックの追加
+.emacs で py-blockend.el の読み込みとフックの追加すると Python モードのマイナーモードが追加されます。
 
 ```lisp:
 (add-hook 'python-mode-hook 'py-blockend-mode)
 ```
 
-で Python モードのマイナーモードとして動作します。
+pyblockend.py を pyblockend コマンドとして呼び出せるようにするか、カスタマイズ変数 <code>py-blockend-command</code> を変更してください。
+
 
 | コマンド | 内容 |
 |:--|:--|
@@ -142,8 +140,7 @@ py-blockend-command-append に追加してください。
 
 ### ファイルを開いた直後に "undo" する
 
-ファイルを開いた直後に <code>M-x undo</code> できます。
-ブロック終端の追加前の状態になるので、保存されているファイルの状態を確認できます。
+ファイルを開いた直後に <code>M-x undo</code> できます。ブロック終端の追加前の状態になるので、保存されているファイルの状態を確認できます。
 
 pyblockend の失敗により壊れたときの対処方法にもなります。
 
