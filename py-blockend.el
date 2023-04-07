@@ -201,17 +201,22 @@
   "py-blockend minor mode"
   :global nil
   :keymap nil
-  :lighter ""
+  :lighter " EOB"
+
+  (make-variable-buffer-local 'py-blockend--mode-enable)
 
   (cond
    ((and py-blockend-global
          py-blockend-mode)
-    (save-excursion
-      (py-blockend--command-call (point-min) (point-max)
-                                 py-blockend-command-append)
-      (set-buffer-modified-p nil))
+    (setq py-blockend--mode-enable t)
+    (py-blockend-append-buffer t)
+    (when (eq 0 (length (get-buffer-window-list (current-buffer))))
+      (goto-char (point-min)))
     (py-blockend--add-hooks))
    (t
+    (when py-blockend--mode-enable
+      (setq py-blockend--mode-enable nil)
+      (py-blockend-remove-buffer t))
     (py-blockend--remove-hooks))))
 
 ;; ----------------------------------------------------------------------------
