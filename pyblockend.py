@@ -159,7 +159,9 @@ class Token:
             return rhs == self.type
         if isinstance(rhs, str):
             return rhs == self.data
-        return (rhs.type == self.type and rhs.data == self.data)
+        if isinstance(rhs, Token):
+            return (rhs.type == self.type and rhs.data == self.data)
+        return False
 
     def __ne__(self, rhs):
         return not self.__eq__(rhs)
@@ -545,24 +547,40 @@ class Parser(Lexer):
         epos = len(bstack) - (1 if line.block_end_keyword else 0)
         if (epos - spos) < 2 and second:
             return
+
+        iline = line
+        ispace = ''
+        iekw = False
+        if iline.token:
+            token = iline.token[0]
+            if token == TokenType.SPACE:
+                ispace = token.data
+                iekw = (len(iline.token) >= 2 and
+                        iline.token[1].data in BLOCK_END_KEYWORD)
+
         eol = Token(TokenType.EOL, '\n')
         for stat in reversed(bstack[spos:epos]):
+            stack = bstack[:epos]
+            epos -= 1
+
+            space = ' ' * stat.bindent
+            if space == ispace and iekw:
+                continue
+
             bkw = stat.keyword
             ekw = 'pass'
             if bkw == 'def':
                 ekw = self.DEF_BLOCK_END
             elif bkw in LOOP_KEYWORD:
                 ekw = self.LOOP_BLOCK_END
-            stack = bstack[:epos]
             if (self.classdefnl and bkw == 'class' and
                     line.block_stack[-1].keyword == 'def'):
                 lnum += 1
                 line = LineStatus([eol])
                 line.block_stack = stack
                 self.lines.insert(lnum, line)
-            epos -= 1
             lnum += 1
-            token = [Token(TokenType.SPACE, ' ' * stat.bindent),
+            token = [Token(TokenType.SPACE, space),
                      Token(TokenType.WORD, ekw), eol]
             line = LineStatus(token)
             line.block_stack = stack
