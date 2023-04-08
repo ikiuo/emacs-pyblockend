@@ -103,8 +103,8 @@
     (save-excursion
       (when (> beg end)
         (cl-rotatef beg end))
-      (setq beg (funcall bol-point beg))
-      (setq end (funcall eol-point end))
+      ;; (setq beg (funcall bol-point beg))
+      ;; (setq end (funcall eol-point end))
       (dolist (wp wins)
         (let ((win (nth 0 wp))
               (wpos (funcall bol-point (nth 1 wp)))

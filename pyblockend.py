@@ -215,8 +215,6 @@ class LineStatus:
             self.block_start_keyword = s in BLOCK_START_KEYWORD
             self.block_second_keyword = s in BLOCK_SECOND_KEYWORD
             self.block_end_keyword = s in BLOCK_END_KEYWORD
-        if tokens[-1] != TokenType.EOL:
-            raise Exception('Bug!')
         for p in range(len(tokens) - 1, -1, -1):
             token = tokens[p]
             if token.type not in (TokenType.EOL, TokenType.SPACE, TokenType.COMMENT):
@@ -319,16 +317,18 @@ class Lexer:
             return self.getcomment(ch)
 
         s, t = self.stream.read(2)
-        u = ch + s
-        if u in self.OPDELS:
-            return Token(TokenType.OPDEL, u)
-        self.stream.putchar(t[1])
-        u = ch + s[0]
-        if u in self.OPDELS:
-            return Token(TokenType.OPDEL, u)
-        if u == '\\\n':
-            return self.getspace(u)
-        self.stream.putchar(t[0])
+        if len(s) > 1:
+            u = ch + s
+            if u in self.OPDELS:
+                return Token(TokenType.OPDEL, u)
+            self.stream.putchar(t[1])
+        if s:
+            u = ch + s[0]
+            if u in self.OPDELS:
+                return Token(TokenType.OPDEL, u)
+            if u == '\\\n':
+                return self.getspace(u)
+            self.stream.putchar(t[0])
 
         if ch == ':':
             return Token(TokenType.COLON, ch)
