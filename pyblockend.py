@@ -544,9 +544,7 @@ class Parser(Lexer):
         line = self.lines[lnum]
         bstack = line.block_stack
         spos = reduce(lambda v, s: v + int(s.bindent <= indent), bstack, 0)
-        epos = len(bstack) - (1 if line.block_end_keyword else 0)
-        if (epos - spos) < 2 and second:
-            return
+        epos = len(bstack)
 
         iline = line
         ispace = ''
