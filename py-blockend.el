@@ -26,6 +26,10 @@
   ""
   :type 'boolean)
 
+(defcustom py-blockend-minor-mode-line " EOB"
+  ""
+  :type 'string)
+
 ;; ----------------------------------------------------------------------------
 
 (defun py-blockend-toggle-global ()
@@ -201,7 +205,7 @@
   "py-blockend minor mode"
   :global nil
   :keymap nil
-  :lighter " EOB"
+  :lighter py-blockend-minor-mode-line
 
   (make-variable-buffer-local 'py-blockend--mode-enable)
 
