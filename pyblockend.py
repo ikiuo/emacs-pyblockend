@@ -613,6 +613,18 @@ class Parser(Lexer):
                         break
                     line.setempty()
 
+        for line in reversed(self.lines):
+            if line.empty:
+                continue
+            if line.statement < 2:
+                break
+            skw = line.block_stack[-1].keyword
+            ekw = line.getline().strip()
+            if skw in REDUCE_KEYWORD.get(ekw, tuple()):
+                line.setempty()
+            break
+
+
     def getsource(self):
         r = ''
         for line in self.lines:
