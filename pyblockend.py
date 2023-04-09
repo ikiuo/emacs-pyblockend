@@ -207,7 +207,7 @@ class LineStatus:
 
         token = tokens[0]
         if token == TokenType.SPACE:
-            self.indent = LineStatus.getcolumn(token.data)
+            self.indent = self.getcolumn(token.data)
             token = tokens[1]
         if token == TokenType.WORD:
             s = token.data
@@ -222,7 +222,7 @@ class LineStatus:
                 self.colon = (token == TokenType.COLON)
                 break
 
-        if not self.empty:
+        if self.empty:
             self.comment = bool(sum(token.type == TokenType.COMMENT for token in tokens))
 
     def __repr__(self):
