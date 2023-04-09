@@ -445,6 +445,7 @@ class Parser(Lexer):
 
         plnum = 0
         pindent = 0
+        lindent = 0
         benter = None
         slnum = None
         while True:
