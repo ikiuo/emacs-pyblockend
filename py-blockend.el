@@ -74,6 +74,26 @@
 
 ;; ----------------------------------------------------------------------------
 
+(defun py-blockend-goto-line (LINE)
+  (interactive "nGoto Line: ")
+  (if py-blockend-mode
+      (let ((cbuf (current-buffer))
+            (tbuf (generate-new-buffer " *py-blockend-temporary*"))
+            (cb (buffer-string)) tb alist)
+        (apply 'call-process-region (point-min) (point-max)
+               py-blockend-command nil tbuf nil
+               (split-string py-blockend-command-remove " "))
+        (set-buffer tbuf)
+        (setq tb (buffer-string))
+        (set-buffer cbuf)
+        (kill-buffer tbuf)
+        (setq alist (caar (cdr (py-blockend--updated-line-map cb tb))))
+        (goto-line (car (rassoc LINE alist)))
+        nil)
+    (goto-line LINE)))
+
+;; ----------------------------------------------------------------------------
+
 (defun py-blockend--command-call (beg end command-option)
   (apply 'call-process-region beg end
          py-blockend-command t t nil
@@ -91,8 +111,7 @@
       (if (string= cbuf ubuf)
           (set-buffer-modified-p modified)
         (setq ulm (py-blockend--updated-line-map cbuf ubuf))
-        (setq grow (nth 0 ulm))
-        (setq udata (nth 1 ulm)))
+        (cl-multiple-value-setq (grow udata) ulm))
       (py-blockend--set-window-start-and-point
        (dolist (wp wdata wins)
          (add-to-list 'wins (py-blockend--update-point
@@ -177,16 +196,16 @@
 
 (defun py-blockend--before-save-hook ()
   (let ((win (py-blockend--window-start-and-point)) pbuf nbuf)
-    (setq pbuf (buffer-substring (point-min) (point-max)))
+    (setq pbuf (buffer-string))
     (py-blockend-remove-buffer)
-    (setq nbuf (buffer-substring (point-min) (point-max)))
+    (setq nbuf (buffer-string))
     (setq py-blockend--hook-temporary (list win pbuf nbuf))))
 
 (defun py-blockend--after-save-hook ()
   (let (wins pbuf nbuf)
     (cl-multiple-value-setq (wins pbuf nbuf) py-blockend--hook-temporary)
-    (when (string= nbuf (buffer-substring (point-min) (point-max)))
-      (delete-region (point-min) (point-max)) (insert pbuf)
+    (when (string= nbuf (buffer-string))
+      (erase-buffer) (insert pbuf)
       (py-blockend--set-window-start-and-point wins))
     (when py-blockend-append-after-save
       (py-blockend-append-buffer))
