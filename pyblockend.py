@@ -247,6 +247,13 @@ class LineStatus:
             f' token={repr(self.token)})'
         )
 
+    def getdebug(self):
+        lnum = self.number
+        prev = self.previous
+        slev = len(self.block_stack)
+        ltext = self.getline().replace('\n', '')
+        return f'{lnum}:{prev}:D{slev}:{ltext}'
+
     @staticmethod
     def getcolumn(s):
         tab = TAB_WIDTH
@@ -504,6 +511,9 @@ class Parser(Lexer):
             line.block_stack = list(bstack)
             line.statement = bstat.statement
 
+            if self.debug:
+                print(line.getdebug())
+
             lines.append(line)
 
         self.lines = lines
@@ -540,39 +550,41 @@ class Parser(Lexer):
             self.lines[-1].fixeol()
         lnum = self.last_statement
         if lnum > 1:
-            self.insert_block_end(lnum, 0, False)
+            self.insert_block_end(lnum, len(self.lines), 0, False)
         while lnum > 1:
             line = self.lines[lnum]
             if not line.block_leave:
                 lnum -= 1
                 continue
             lnum = line.previous
-            self.insert_block_end(lnum, line.indent, line.block_second_keyword)
+            bsec = line.block_second_keyword
+            self.insert_block_end(lnum, line.number, line.indent, bsec)
 
-    def insert_block_end(self, lnum, indent, second):
+    def insert_block_end(self, lnum, lend, indent, second):
         line = self.lines[lnum]
+        ilnum = line.number
         bstack = line.block_stack
         spos = reduce(lambda v, s: v + int(s.bindent <= indent), bstack, 0)
         epos = len(bstack)
-
-        iline = line
-        ispace = ''
-        iekw = False
-        if iline.token:
-            token = iline.token[0]
-            if token == TokenType.SPACE:
-                ispace = token.data
-                iekw = (len(iline.token) >= 2 and
-                        iline.token[1].data in BLOCK_END_KEYWORD)
 
         eol = line.TOKEN_EOL
         for stat in reversed(bstack[spos:epos]):
             stack = bstack[:epos]
             epos -= 1
 
-            space = ' ' * stat.bindent
-            if space == ispace and iekw:
+            if line.block_end_keyword and line.indent == stat.bindent:
                 continue
+
+            lnmax = min(lend, len(self.lines) - 1)
+            cskip = False
+            while lnum < lnmax:
+                tline = self.lines[lnum + 1]
+                if (not tline.empty or not tline.comment or tline.indent != stat.bindent):
+                    break
+                lnum += 1
+                line = tline
+                ilnum = line.number
+                cskip = True
 
             bkw = stat.keyword
             ekw = 'pass'
@@ -580,16 +592,18 @@ class Parser(Lexer):
                 ekw = self.DEF_BLOCK_END
             elif bkw in LOOP_KEYWORD:
                 ekw = self.LOOP_BLOCK_END
-            if (self.classdefnl and bkw == 'class' and
+            if (not cskip and self.classdefnl and bkw == 'class' and
                     line.block_stack[-1].keyword == 'def'):
                 lnum += 1
                 line = LineStatus([eol])
+                line.number = ilnum
                 line.block_stack = stack
                 self.lines.insert(lnum, line)
             lnum += 1
-            token = [Token(TokenType.SPACE, space),
+            token = [Token(TokenType.SPACE, ' ' * stat.bindent),
                      Token(TokenType.WORD, ekw), eol]
             line = LineStatus(token)
+            line.number = ilnum
             line.block_stack = stack
             self.lines.insert(lnum, line)
 
@@ -632,7 +646,6 @@ class Parser(Lexer):
             if skw in REDUCE_KEYWORD.get(ekw, tuple()):
                 line.setempty()
             break
-
 
     def getsource(self):
         r = ''
