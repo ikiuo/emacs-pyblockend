@@ -184,6 +184,8 @@ class BlockStatus:
 
 
 class LineStatus:
+    TOKEN_EOL = Token(TokenType.EOL, '\n')
+
     def __init__(self, tokens):
         self.number = 0
         self.previous = 0
@@ -268,7 +270,7 @@ class LineStatus:
 
     def fixeol(self):
         if self.token[-1] != TokenType.EOL:
-            self.token += (Token(TokenType.EOL, '\n'),)
+            self.token += (self.TOKEN_EOL,)
 
 
 class Lexer:
@@ -563,7 +565,7 @@ class Parser(Lexer):
                 iekw = (len(iline.token) >= 2 and
                         iline.token[1].data in BLOCK_END_KEYWORD)
 
-        eol = Token(TokenType.EOL, '\n')
+        eol = line.TOKEN_EOL
         for stat in reversed(bstack[spos:epos]):
             stack = bstack[:epos]
             epos -= 1
