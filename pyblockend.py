@@ -266,6 +266,10 @@ class LineStatus:
         self.empty = True
         self.token = []
 
+    def fixeol(self):
+        if self.token[-1] != TokenType.EOL:
+            self.token += (Token(TokenType.EOL, '\n'),)
+
 
 class Lexer:
     WCHARS = {c for c in (
@@ -530,6 +534,8 @@ class Parser(Lexer):
         return LineStatus(tuple(line))
 
     def append_block_end(self):
+        if self.lines:
+            self.lines[-1].fixeol()
         lnum = self.last_statement
         if lnum > 1:
             self.insert_block_end(lnum, 0, False)
