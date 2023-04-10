@@ -122,6 +122,7 @@ pyblockend.py を pyblockend コマンドとして呼び出せるようにする
 | M-x py-blockend-toggle-global | py-blockend-mode のグローバル フラグを切り替え |
 | M-x py-blockend-global-enable | py-blockend-mode のグローバル フラグを有効 |
 | M-x py-blockend-global-disable | py-blockend-mode のグローバル フラグを無効 |
+| M-x py-blockend-goto-line | ブロック終端の削除した行番号に対応する行への移動 |
 
 ※グローバル フラグの操作は既に開いているファイル（バッファ）には影響しません。
 
