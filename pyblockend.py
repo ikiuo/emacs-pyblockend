@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
-import re
 import sys
+
 from enum import Enum
-from collections import namedtuple
 from functools import reduce
 
 # -----------------------------------------------------------------------------
@@ -26,7 +25,11 @@ class String(str):
             self.lpos = None
 
     def __repr__(self):
-        return f'(String:{repr(self.name)}:{self.lnum}:{self.lpos}:{repr(super())})'
+        return ('(String:'
+                f' name={repr(self.name)},'
+                f' lnum={self.lnum},'
+                f' lpos={self.lpos},'
+                f' str={repr(super())})')
 
     def __add__(self, rhs):
         return String.create(self.name, self.lnum, self.lpos, super().__add__(rhs))
@@ -146,7 +149,9 @@ class Token:
         self.data = data
 
     def __repr__(self):
-        return f'({repr(self.type)}: {repr(self.data)})'
+        return ('(Token:'
+                f' type={repr(self.type)},'
+                f' data={repr(self.data)})')
 
     def __str__(self):
         return self.data
@@ -176,7 +181,8 @@ class BlockStatus:
         self.statement = 0
 
     def __repr__(self):
-        return (f'(BlockStatus: line={self.line},'
+        return ('(BlockStatus:'
+                f' line={self.line},'
                 f' keyword={repr(self.keyword)},'
                 f' sindent={self.sindent},'
                 f' bindent={self.bindent},'
@@ -228,24 +234,22 @@ class LineStatus:
             self.comment = bool(sum(token.type == TokenType.COMMENT for token in tokens))
 
     def __repr__(self):
-        return (
-            f'(LineStatus:'
-            f' number={self.number},'
-            f' previous={self.previous},'
-            f' indent={self.indent},'
-            f' empty={self.empty},'
-            f' comment={self.comment},'
-            f' word={self.word},'
-            f' colon={self.colon},'
-            f' statement={self.statement}'
-            f' block_start_line={self.block_start_line},'
-            f' block_start_keyword={self.block_start_keyword},'
-            f' block_end_keyword={self.block_end_keyword},'
-            f' block_enter={self.block_enter},'
-            f' block_leave={self.block_leave},'
-            f' block_stack={repr(self.block_stack)},'
-            f' token={repr(self.token)})'
-        )
+        return ('(LineStatus:'
+                f' number={self.number},'
+                f' previous={self.previous},'
+                f' indent={self.indent},'
+                f' empty={self.empty},'
+                f' comment={self.comment},'
+                f' word={self.word},'
+                f' colon={self.colon},'
+                f' statement={self.statement}'
+                f' block_start_line={self.block_start_line},'
+                f' block_start_keyword={self.block_start_keyword},'
+                f' block_end_keyword={self.block_end_keyword},'
+                f' block_enter={self.block_enter},'
+                f' block_leave={self.block_leave},'
+                f' block_stack={repr(self.block_stack)},'
+                f' token={repr(self.token)})')
 
     def getdebug(self):
         lnum = self.number
@@ -658,8 +662,9 @@ class Parser(Lexer):
 
 
 if __name__ == '__main__':
+    import argparse
+
     def main():
-        import argparse
         global TAB_WIDTH
 
         parser = argparse.ArgumentParser()
