@@ -253,11 +253,22 @@ class LineStatus:
                 f' block_stack={repr(self.block_stack)},'
                 f' token={repr(self.token)})')
 
+    def isblock(self, keyword):
+        return self.block_stack[-1].keyword == keyword
+
+    def iscomment(self):
+        return self.empty and self.comment
+
+    def checkcomment(self, indent):
+        return self.iscomment() and self.indent == indent
+
     def getdebug(self):
         ltext = self.getline().replace('\n', '')
-        return (f'N={self.number}'
-                f':P={self.previous}'
+        return (f'N={self.number:03}'
+                f':P={self.previous:03}'
                 f':D={len(self.block_stack)}'
+                f':S={self.statement:02}'
+                f':{self.block_stack[-1].keyword:8}'
                 f':{ltext}')
 
     @staticmethod
@@ -550,17 +561,13 @@ class Parser(Lexer):
             self.lines[-1].fixeol()
         line_number = self.last_statement
         if line_number > 1:
-            self.insert_block_end(line_number, len(self.lines), 0, False)
+            self.insert_block_end(line_number, len(self.lines), 0)
         while line_number > 1:
             line = self.lines[line_number]
-            if not line.block_leave:
-                line_number -= 1
-                continue
             line_number = line.previous
-            second = line.block_second_keyword
-            self.insert_block_end(line_number, line.number, line.indent, second)
+            self.insert_block_end(line_number, line.number, line.indent)
 
-    def insert_block_end(self, line_number, line_number_end, indent, second):
+    def insert_block_end(self, line_number, line_number_end, indent):
         line = self.lines[line_number]
         insert_line_number = line.number
         block_stack = line.block_stack
@@ -579,13 +586,12 @@ class Parser(Lexer):
             skip_comment = False
             while line_number < line_number_max:
                 check_line = self.lines[line_number + 1]
-                if (not check_line.empty or not check_line.comment or
-                        check_line.indent != block_status.indent_block):
+                if not check_line.checkcomment(block_status.indent_block):
                     break
-                line_number += 1
                 line = check_line
                 insert_line_number = line.number
                 skip_comment = True
+                line_number += 1
 
             block_keyword = block_status.keyword
             block_end = 'pass'
@@ -594,12 +600,13 @@ class Parser(Lexer):
             elif block_keyword in LOOP_KEYWORD:
                 block_end = self.loop_block_end
             if (not skip_comment and self.classdefnl and
-                block_keyword == 'class' and line.block_stack[-1].keyword == 'def'):
+                    block_keyword == 'class' and line.isblock('def')):
                 line_number += 1
                 line = LineStatus([eol])
                 line.number = insert_line_number
                 line.block_stack = line_block_stack
                 self.lines.insert(line_number, line)
+                line_number_end += 1
 
             line_number += 1
             line_indent = ' ' * block_status.indent_block
@@ -609,6 +616,7 @@ class Parser(Lexer):
             line.number = insert_line_number
             line.block_stack = line_block_stack
             self.lines.insert(line_number, line)
+            line_number_end += 1
 
     def remove_block_end(self):
         for line in self.lines:
