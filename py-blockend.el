@@ -79,7 +79,7 @@
   (if py-blockend-mode
       (let ((cbuf (current-buffer))
             (tbuf (generate-new-buffer " *py-blockend-temporary*"))
-            (cb (buffer-string)) tb alist)
+            (cb (buffer-string)) tb m n1 n2 nd)
         (apply 'call-process-region (point-min) (point-max)
                py-blockend-command nil tbuf nil
                (split-string py-blockend-command-remove " "))
@@ -87,8 +87,11 @@
         (setq tb (buffer-string))
         (set-buffer cbuf)
         (kill-buffer tbuf)
-        (setq alist (caar (cdr (py-blockend--updated-line-map cb tb))))
-        (goto-line (car (rassoc LINE alist)))
+        (cl-multiple-value-setq (m n1 n2 nd)
+          (cadr (py-blockend--updated-line-map cb tb)))
+        (if (< LINE n2)
+            (goto-line (car (rassoc LINE m)))
+          (end-of-buffer))
         nil)
     (goto-line LINE)))
 
