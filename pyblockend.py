@@ -14,35 +14,37 @@ TAB_WIDTH = DEFAULT_TAB_WIDTH
 
 
 class String(str):
-    def __init__(self, *args, **kwargs):
-        if len(args) and isinstance(args[0], String):
-            self.name = args[0].name
-            self.lnum = args[0].lnum
-            self.lpos = args[0].lpos
-        else:
-            self.name = None
-            self.lnum = None
-            self.lpos = None
+    def __init__(self, *args):
+        if args:
+            arg0 = args[0]
+            if isinstance(arg0, String):
+                self.name = arg0.name
+                self.line = arg0.line
+                self.offset = arg0.offset
+                return
+        self.name = None
+        self.line = None
+        self.offset = None
 
     def __repr__(self):
         return ('(String:'
                 f' name={repr(self.name)},'
-                f' lnum={self.lnum},'
-                f' lpos={self.lpos},'
+                f' line={self.line},'
+                f' offset={self.offset},'
                 f' str={repr(super())})')
 
     def __add__(self, rhs):
-        return String.create(self.name, self.lnum, self.lpos, super().__add__(rhs))
+        return String.create(self.name, self.line, self.offset, super().__add__(rhs))
 
-    def setparam(self, name, lnum, lpos):
+    def setparam(self, name, line, offset):
         self.name = name
-        self.lnum = lnum
-        self.lpos = lpos
+        self.line = line
+        self.offset = offset
         return self
 
     @staticmethod
-    def create(name, lnum, lpos, s=''):
-        return String(s).setparam(name, lnum, lpos)
+    def create(name, line, offset, data=''):
+        return String(data).setparam(name, line, offset)
 
 
 class ReadStream:
@@ -52,8 +54,8 @@ class ReadStream:
                        (sys.stdin if name == '-' else open(name)))
         self.lines = []
         self.line = ''
-        self.lnum = 0
-        self.lpos = 0
+        self.number = 0
+        self.offset = 0
         self.pending = []
 
     def getline(self):
@@ -61,35 +63,34 @@ class ReadStream:
         if line:
             self.lines.append(line)
             self.line = line
-            self.lnum += 1
-            self.lpos = 0
+            self.number += 1
+            self.offset = 0
         return line
 
     def getchar(self):
         if self.pending:
             return self.pending.pop()
-        if self.lpos >= len(self.line):
+        if self.offset >= len(self.line):
             if not self.getline():
                 return None
-        lpos = self.lpos
-        self.lpos = lpos + 1
-        return String.create(self.name, self.lnum, lpos, self.line[lpos])
+        offset = self.offset
+        self.offset = offset + 1
+        return String.create(self.name, self.number, offset, self.line[offset])
 
-    def putchar(self, c):
-        self.pending.append(c)
+    def putchar(self, char):
+        self.pending.append(char)
         return self
 
-    def read(self, n):
-        t = tuple(self.getchar() for _ in range(n))
-        r = (''.join(s or '' for s in t), t)
-        return r
+    def read(self, count):
+        chars = tuple(self.getchar() for _ in range(count))
+        return (''.join(c or '' for c in chars), chars)
 
-    def write(self, s):
-        self.pending += reversed(s)
+    def write(self, chars):
+        self.pending += reversed(chars)
         return self
 
     def emptychar(self):
-        return String.create(self.name, self.lnum, self.lpos, '')
+        return String.create(self.name, self.number, self.offset, '')
 
 
 class WriteStream:
@@ -172,26 +173,27 @@ class Token:
         return not self.__eq__(rhs)
 
 
+TOKEN_EOL = Token(TokenType.EOL, '\n')
+
+
 class BlockStatus:
-    def __init__(self, line, keyword, sindent, bindent):
-        self.line = line
+    def __init__(self, keyword, line, indent_start, indent_block):
         self.keyword = keyword
-        self.sindent = sindent
-        self.bindent = bindent
+        self.line = line
+        self.indent_start = indent_start
+        self.indent_block = indent_block
         self.statement = 0
 
     def __repr__(self):
         return ('(BlockStatus:'
-                f' line={self.line},'
                 f' keyword={repr(self.keyword)},'
-                f' sindent={self.sindent},'
-                f' bindent={self.bindent},'
+                f' line={self.line},'
+                f' indent_start={self.indent_start},'
+                f' indent_block={self.indent_block},'
                 f' statement={self.statement})')
 
 
 class LineStatus:
-    TOKEN_EOL = Token(TokenType.EOL, '\n')
-
     def __init__(self, tokens):
         self.number = 0
         self.previous = 0
@@ -218,16 +220,16 @@ class LineStatus:
             self.indent = self.getcolumn(token.data)
             token = tokens[1]
         if token == TokenType.WORD:
-            s = token.data
-            self.word = s
-            self.block_start_keyword = s in BLOCK_START_KEYWORD
-            self.block_second_keyword = s in BLOCK_SECOND_KEYWORD
-            self.block_end_keyword = s in BLOCK_END_KEYWORD
-        for p in range(len(tokens) - 1, -1, -1):
-            token = tokens[p]
+            word = token.data
+            self.word = word
+            self.block_start_keyword = word in BLOCK_START_KEYWORD
+            self.block_second_keyword = word in BLOCK_SECOND_KEYWORD
+            self.block_end_keyword = word in BLOCK_END_KEYWORD
+        for index in range(len(tokens) - 1, -1, -1):
+            token = tokens[index]
             if token.type not in (TokenType.EOL, TokenType.SPACE, TokenType.COMMENT):
                 self.empty = False
-                self.colon = (token == TokenType.COLON)
+                self.colon = token == TokenType.COLON
                 break
 
         if self.empty:
@@ -252,24 +254,24 @@ class LineStatus:
                 f' token={repr(self.token)})')
 
     def getdebug(self):
-        lnum = self.number
-        prev = self.previous
-        slev = len(self.block_stack)
         ltext = self.getline().replace('\n', '')
-        return f'{lnum}:{prev}:D{slev}:{ltext}'
+        return (f'N={self.number}'
+                f':P={self.previous}'
+                f':D={len(self.block_stack)}'
+                f':{ltext}')
 
     @staticmethod
-    def getcolumn(s):
+    def getcolumn(line):
         tab = TAB_WIDTH
-        n = 0
-        for c in s:
-            if c == ' ':
-                n += 1
+        column = 0
+        for char in line:
+            if char == ' ':
+                column += 1
                 continue
-            if c == '\t':
-                n += tab - (n % tab)
+            if char == '\t':
+                column += tab - (column % tab)
                 continue
-        return n
+        return column
 
     def getline(self):
         return ''.join(t.data for t in self.token)
@@ -281,16 +283,16 @@ class LineStatus:
 
     def fixeol(self):
         if self.token[-1] != TokenType.EOL:
-            self.token += (self.TOKEN_EOL,)
+            self.token += (TOKEN_EOL,)
 
 
 class Lexer:
-    WCHARS = {c for c in (
+    WORD_CHAR = set(
         '0123456789'
         'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         'abcdefghijklmnopqrstuvwxyz'
         '_'
-    )}
+    )
 
     OPDELS = {
         '+', '-', '*', '**', '/', '//', '%', '@',
@@ -306,85 +308,82 @@ class Lexer:
     }
 
     def __init__(self, stream, **option):
-        self.S = Lexer
-        self.WCHARS = self.S.WCHARS
-        self.OPDELS = self.S.OPDELS
         self.stream = stream
         self.debug = option['debug'] if 'debug' in option else False
 
     def gettoken(self):
-        ch = self.stream.getchar()
-        if ch is None:
+        char = self.stream.getchar()
+        if char is None:
             return None
-        if ch == '\n':
-            return Token(TokenType.EOL, ch)
-        if ord(ch) < 33:
-            return self.getspace(ch)
-        if ch in self.WCHARS or ord(ch) >= 0x80:
-            return self.getword(ch)
-        if ch == '"':
-            s, t = self.stream.read(2)
-            if s == '""':
-                return self.getlongquote(ch + s)
-            self.stream.write(t)
-            return self.getquote(ch)
-        if ch == "'":
-            return self.getquote(ch)
-        if ch == '#':
-            return self.getcomment(ch)
+        if char == '\n':
+            return TOKEN_EOL
+        if ord(char) < 33:
+            return self.getspace(char)
+        if char in self.WORD_CHAR or ord(char) >= 0x80:
+            return self.getword(char)
+        if char == '"':
+            next_str, next_chars = self.stream.read(2)
+            if next_str == '""':
+                return self.getlongquote(char + next_str)
+            self.stream.write(next_chars)
+            return self.getquote(char)
+        if char == "'":
+            return self.getquote(char)
+        if char == '#':
+            return self.getcomment(char)
 
-        s, t = self.stream.read(2)
-        if len(s) > 1:
-            u = ch + s
-            if u in self.OPDELS:
-                return Token(TokenType.OPDEL, u)
-            self.stream.putchar(t[1])
-        if s:
-            u = ch + s[0]
-            if u in self.OPDELS:
-                return Token(TokenType.OPDEL, u)
-            if u == '\\\n':
-                return self.getspace(u)
-            self.stream.putchar(t[0])
+        next_str, next_chars = self.stream.read(2)
+        if len(next_str) > 1:
+            check_str = char + next_str
+            if check_str in self.OPDELS:
+                return Token(TokenType.OPDEL, check_str)
+            self.stream.putchar(next_chars[1])
+        if next_str:
+            check_str = char + next_str[0]
+            if check_str in self.OPDELS:
+                return Token(TokenType.OPDEL, check_str)
+            if check_str == '\\\n':
+                return self.getspace(check_str)
+            self.stream.putchar(next_chars[0])
 
-        if ch == ':':
-            return Token(TokenType.COLON, ch)
-        return Token(TokenType.OPDEL, ch)
+        if char == ':':
+            return Token(TokenType.COLON, char)
+        return Token(TokenType.OPDEL, char)
 
     def getspace(self, space):
         stream = self.stream
         while True:
-            ch = stream.getchar()
-            if ch is None:
+            char = stream.getchar()
+            if char is None:
                 return Token(TokenType.SPACE, space)
-            if ch == '\n':
+            if char == '\n':
                 break
-            if ord(ch) < 33:
-                space += ch
+            if ord(char) < 33:
+                space += char
                 continue
-            if ch != '\\':
+            if char != '\\':
                 break
-            space += ch
-            c2 = stream.getchar()
-            if ord(c2) < 33:
-                space += c2
+            space += char
+            next_char = stream.getchar()
+            if ord(next_char) < 33:
+                space += next_char
                 continue
-            stream.putchar(c2)
+            stream.putchar(next_char)
             break
-        stream.putchar(ch)
+        stream.putchar(char)
         return Token(TokenType.SPACE, space)
 
     def getword(self, word):
-        WCHARS = self.WCHARS
+        word_char = self.WORD_CHAR
         stream = self.stream
         while True:
-            ch = stream.getchar()
-            if ch is None:
+            char = stream.getchar()
+            if char is None:
                 break
-            if ch not in WCHARS and ord(ch) < 0x80:
-                stream.putchar(ch)
+            if char not in word_char and ord(char) < 0x80:
+                stream.putchar(char)
                 break
-            word += ch
+            word += char
         return Token(TokenType.WORD, word)
 
     def getquote(self, qstr):
@@ -392,49 +391,49 @@ class Lexer:
         escape = False
         qch = str(qstr)
         while True:
-            ch = stream.getchar()
-            if ch is None:
+            char = stream.getchar()
+            if char is None:
                 break
             if escape:
-                qstr += ch
+                qstr += char
                 escape = False
                 continue
-            if ch == '\n':
-                stream.putchar(ch)
+            if char == '\n':
+                stream.putchar(char)
                 break
-            qstr += ch
-            if ch == '\\':
+            qstr += char
+            if char == '\\':
                 escape = True
                 continue
-            if ch == qch:
+            if char == qch:
                 break
         return Token(TokenType.STRING, qstr)
 
     def getlongquote(self, qstr):
         stream = self.stream
         while True:
-            ch = stream.getchar()
-            if ch is None:
+            char = stream.getchar()
+            if char is None:
                 break
-            if ch == '"':
-                s, t = stream.read(2)
-                if s == '""':
+            if char == '"':
+                next_str, next_chars = stream.read(2)
+                if next_str == '""':
                     qstr += '"""'
                     break
-                stream.write(t)
-            qstr += ch
+                stream.write(next_chars)
+            qstr += char
         return Token(TokenType.STRING, qstr)
 
     def getcomment(self, cstr):
         stream = self.stream
         while True:
-            ch = stream.getchar()
-            if ch is None:
+            char = stream.getchar()
+            if char is None:
                 break
-            if ch == '\n':
-                stream.putchar(ch)
+            if char == '\n':
+                stream.putchar(char)
                 break
-            cstr += ch
+            cstr += char
         return Token(TokenType.COMMENT, cstr)
 
 
@@ -444,76 +443,73 @@ class Parser(Lexer):
 
     def __init__(self, stream, **option):
         super().__init__(stream, **option)
-
-        self.S = Parser
-        self.BRACKET_OPEN = self.S.BRACKET_OPEN
-        self.BRACKET_CLOSE = self.S.BRACKET_CLOSE
-        self.DEF_BLOCK_END = option['defend'] if 'defend' in option else 'pass'
-        self.LOOP_BLOCK_END = option['loopend'] if 'loopend' in option else 'pass'
+        self.def_block_end = option['defend'] if 'defend' in option else 'pass'
+        self.loop_block_end = option['loopend'] if 'loopend' in option else 'pass'
         self.classdefnl = option['classdefnl'] if 'classdefnl' in option else False
         self.error = []
 
         lines = []
 
-        blnum = 0
-        bkeyword = '[main]'
-        bstat = BlockStatus(blnum, bkeyword, -1, 0)
-        bstack = [bstat]
+        block_keyword = '[main]'
+        block_start_line = 0
+        block_status = BlockStatus(block_keyword, block_start_line, -1, 0)
+        block_stack = [block_status]
 
-        plnum = 0
-        pindent = 0
-        lindent = 0
-        benter = None
-        slnum = None
+        statement_line = None
+        last_statement = 0
+        last_indent = 0
+        line_indent = 0
+        block_enter = None
         while True:
-            if slnum:
-                plnum = slnum
-                slnum = None
+            if statement_line:
+                last_statement = statement_line
+                statement_line = None
 
             line = self.readline()
             if not line:
                 break
 
-            lnum = len(lines)
+            line_number = len(lines)
             if not line.empty:
-                for st in bstack:
-                    st.statement += 1
+                for stat in block_stack:
+                    stat.statement += 1
 
-                lindent = line.indent
-                line.block_enter = lindent > pindent
-                line.block_leave = lindent < pindent
+                line_indent = line.indent
+                line.block_enter = line_indent > last_indent
+                line.block_leave = line_indent < last_indent
 
                 if line.block_leave:
-                    while lindent <= bstack[-1].sindent:
-                        bstack.pop()
-                        bstat = bstack[-1]
-                    blnum = bstat.line
-                    bkeyword = bstat.keyword
+                    while line_indent <= block_stack[-1].indent_start:
+                        block_stack.pop()
+                        block_status = block_stack[-1]
+                    block_start_line = block_status.line
+                    block_keyword = block_status.keyword
 
-                if benter:
-                    bstat.bindent = lindent
-                    benter = False
+                if block_enter:
+                    block_status.indent_block = line_indent
+                    block_enter = False
 
                 if line.block_start_keyword and line.colon:
-                    if lindent <= bstat.sindent:
-                        bstack.pop()
-                    blnum = lnum
-                    bkeyword = line.word
-                    bstat = BlockStatus(blnum, bkeyword, lindent, lindent)
-                    bstack.append(bstat)
-                    benter = True
+                    if line_indent <= block_status.indent_start:
+                        block_stack.pop()
+                    block_start_line = line_number
+                    block_keyword = line.word
+                    block_status = BlockStatus(block_keyword, block_start_line,
+                                               line_indent, line_indent)
+                    block_stack.append(block_status)
+                    block_enter = True
 
-                slnum = lnum
-                pindent = lindent
+                statement_line = line_number
+                last_indent = line_indent
 
-            elif line.comment and lindent == line.indent:
-                slnum = lnum
+            elif line.comment and line_indent == line.indent:
+                statement_line = line_number
 
-            line.number = lnum
-            line.previous = plnum
-            line.block_start_line = blnum
-            line.block_stack = list(bstack)
-            line.statement = bstat.statement
+            line.number = line_number
+            line.previous = last_statement
+            line.block_start_line = block_start_line
+            line.block_stack = list(block_stack)
+            line.statement = block_status.statement
 
             if self.debug:
                 print(line.getdebug())
@@ -521,7 +517,7 @@ class Parser(Lexer):
             lines.append(line)
 
         self.lines = lines
-        self.last_statement = plnum
+        self.last_statement = last_statement
 
     def readline(self):
         line = []
@@ -535,13 +531,13 @@ class Parser(Lexer):
                 if stack:
                     continue
                 break
-            s = token.data
-            if s in self.BRACKET_OPEN:
-                stack.append(self.BRACKET_OPEN[s])
+            char = token.data
+            if char in self.BRACKET_OPEN:
+                stack.append(self.BRACKET_OPEN[char])
                 continue
-            if s in self.BRACKET_CLOSE:
-                if stack and s != stack.pop():
-                    self.error.append((s, "error: unmatched parentheses/bracket"))
+            if char in self.BRACKET_CLOSE:
+                if stack and char != stack.pop():
+                    self.error.append((char, "error: unmatched parentheses/bracket"))
                     stack = []
                 continue
         if not line:
@@ -552,90 +548,93 @@ class Parser(Lexer):
     def append_block_end(self):
         if self.lines:
             self.lines[-1].fixeol()
-        lnum = self.last_statement
-        if lnum > 1:
-            self.insert_block_end(lnum, len(self.lines), 0, False)
-        while lnum > 1:
-            line = self.lines[lnum]
+        line_number = self.last_statement
+        if line_number > 1:
+            self.insert_block_end(line_number, len(self.lines), 0, False)
+        while line_number > 1:
+            line = self.lines[line_number]
             if not line.block_leave:
-                lnum -= 1
+                line_number -= 1
                 continue
-            lnum = line.previous
-            bsec = line.block_second_keyword
-            self.insert_block_end(lnum, line.number, line.indent, bsec)
+            line_number = line.previous
+            second = line.block_second_keyword
+            self.insert_block_end(line_number, line.number, line.indent, second)
 
-    def insert_block_end(self, lnum, lend, indent, second):
-        line = self.lines[lnum]
-        ilnum = line.number
-        bstack = line.block_stack
-        spos = reduce(lambda v, s: v + int(s.bindent <= indent), bstack, 0)
-        epos = len(bstack)
+    def insert_block_end(self, line_number, line_number_end, indent, second):
+        line = self.lines[line_number]
+        insert_line_number = line.number
+        block_stack = line.block_stack
+        stack_top = reduce(lambda v, s: v + int(s.indent_block <= indent), block_stack, 0)
+        stack_end = len(block_stack)
 
-        eol = line.TOKEN_EOL
-        for stat in reversed(bstack[spos:epos]):
-            stack = bstack[:epos]
-            epos -= 1
+        eol = TOKEN_EOL
+        for block_status in reversed(block_stack[stack_top:stack_end]):
+            line_block_stack = block_stack[:stack_end]
+            stack_end -= 1
 
-            if line.block_end_keyword and line.indent == stat.bindent:
+            if line.block_end_keyword and line.indent == block_status.indent_block:
                 continue
 
-            lnmax = min(lend, len(self.lines) - 1)
-            cskip = False
-            while lnum < lnmax:
-                tline = self.lines[lnum + 1]
-                if (not tline.empty or not tline.comment or tline.indent != stat.bindent):
+            line_number_max = min(line_number_end, len(self.lines) - 1)
+            skip_comment = False
+            while line_number < line_number_max:
+                check_line = self.lines[line_number + 1]
+                if (not check_line.empty or not check_line.comment or
+                        check_line.indent != block_status.indent_block):
                     break
-                lnum += 1
-                line = tline
-                ilnum = line.number
-                cskip = True
+                line_number += 1
+                line = check_line
+                insert_line_number = line.number
+                skip_comment = True
 
-            bkw = stat.keyword
-            ekw = 'pass'
-            if bkw == 'def':
-                ekw = self.DEF_BLOCK_END
-            elif bkw in LOOP_KEYWORD:
-                ekw = self.LOOP_BLOCK_END
-            if (not cskip and self.classdefnl and bkw == 'class' and
-                    line.block_stack[-1].keyword == 'def'):
-                lnum += 1
+            block_keyword = block_status.keyword
+            block_end = 'pass'
+            if block_keyword == 'def':
+                block_end = self.def_block_end
+            elif block_keyword in LOOP_KEYWORD:
+                block_end = self.loop_block_end
+            if (not skip_comment and self.classdefnl and
+                block_keyword == 'class' and line.block_stack[-1].keyword == 'def'):
+                line_number += 1
                 line = LineStatus([eol])
-                line.number = ilnum
-                line.block_stack = stack
-                self.lines.insert(lnum, line)
-            lnum += 1
-            token = [Token(TokenType.SPACE, ' ' * stat.bindent),
-                     Token(TokenType.WORD, ekw), eol]
+                line.number = insert_line_number
+                line.block_stack = line_block_stack
+                self.lines.insert(line_number, line)
+
+            line_number += 1
+            line_indent = ' ' * block_status.indent_block
+            token = [Token(TokenType.SPACE, line_indent),
+                     Token(TokenType.WORD, block_end), eol]
             line = LineStatus(token)
-            line.number = ilnum
-            line.block_stack = stack
-            self.lines.insert(lnum, line)
+            line.number = insert_line_number
+            line.block_stack = line_block_stack
+            self.lines.insert(line_number, line)
 
     def remove_block_end(self):
         for line in self.lines:
             if not line.block_leave:
                 continue
-            lnum = line.previous
-            while lnum > 1:
-                line = self.lines[lnum]
+            line_number = line.previous
+            while line_number > 1:
+                line = self.lines[line_number]
                 if line.statement < 2:
                     break
-                skw = line.block_stack[-1].keyword
-                ekw = line.getline().strip()
-                if skw not in REDUCE_KEYWORD.get(ekw, tuple()):
+                block_keyword = line.block_stack[-1].keyword
+                block_end = line.getline().strip()
+                if block_keyword not in REDUCE_KEYWORD.get(block_end, tuple()):
                     break
                 line.setempty()
-                lnum -= 1
+                line_number -= 1
 
         for line in self.lines:
             if line.statement >= 2 and line.getline().strip() == 'pass':
                 line.setempty()
                 if line.block_stack[-1].keyword != 'class':
                     continue
-                lnum = line.number
-                while lnum > 2:
-                    lnum -= 1
-                    line = self.lines[lnum]
+                line_number = line.number
+                while line_number > 2:
+                    line_number -= 1
+                    line = self.lines[line_number]
                     if line.getline().strip():
                         break
                     line.setempty()
@@ -645,17 +644,17 @@ class Parser(Lexer):
                 continue
             if line.statement < 2:
                 break
-            skw = line.block_stack[-1].keyword
-            ekw = line.getline().strip()
-            if skw in REDUCE_KEYWORD.get(ekw, tuple()):
+            block_keyword = line.block_stack[-1].keyword
+            block_end = line.getline().strip()
+            if block_keyword in REDUCE_KEYWORD.get(block_end, tuple()):
                 line.setempty()
             break
 
     def getsource(self):
-        r = ''
+        text = ''
         for line in self.lines:
-            r += line.getline()
-        return r
+            text += line.getline()
+        return text
 
 
 # -----------------------------------------------------------------------------
@@ -707,7 +706,7 @@ if __name__ == '__main__':
                         debug=args.debug)
         if parser.error and args.error_stop:
             for error, msg in parser.error:
-                sys.stderr.write(f'{error.name}:{error.lnum}: {msg}\n')
+                sys.stderr.write(f'{error.name}:{error.line}: {msg}\n')
             if args.error_stop:
                 sys.exit(2)
 
