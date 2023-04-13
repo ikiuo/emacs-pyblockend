@@ -716,7 +716,8 @@ class Parser(Lexer):
             self.append_newline = False
             if block.keyword == 'class':
                 self.append_newline = True
-            elif newline and block.keyword == 'def':
+            elif (newline and block.keyword == 'def' and
+                  self.line[line_number + 1].getline().strip()):
                 line_number += 1
                 status = LineStatus([TOKEN_EOL], line.source_line)
                 status.number = line_number
