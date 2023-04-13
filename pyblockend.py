@@ -1,14 +1,35 @@
 #!/usr/bin/env python3
 
 import sys
-
 from enum import Enum
-from functools import reduce
 
 # -----------------------------------------------------------------------------
 
 DEFAULT_TAB_WIDTH = 4
-TAB_WIDTH = DEFAULT_TAB_WIDTH
+
+KEYWORD_START = {
+    'class', 'def', 'for', 'while',
+    'if', 'elif', 'else',
+    'match', 'case',
+    'try', 'except', 'finally',
+    'with',
+}
+
+KEYWORD_SECOND = {
+    'elif', 'else', 'case',
+    'except', 'finally',
+}
+
+KEYWORD_BLOCK = KEYWORD_START | KEYWORD_SECOND
+
+KEYWORD_END = {
+    'pass',
+    'continue', 'break',
+    'return', 'yield',
+    'raise',
+}
+
+KEYWORD_LOOP = {'for', 'while'}
 
 # -----------------------------------------------------------------------------
 
@@ -27,11 +48,12 @@ class String(str):
         self.offset = None
 
     def __repr__(self):
-        return ('(String:'
-                f' name={repr(self.name)},'
-                f' line={self.line},'
-                f' offset={self.offset},'
-                f' str={repr(super())})')
+        return ('(String'
+                f': name={repr(self.name)}'
+                f', line={self.line}'
+                f', offset={self.offset}'
+                f', str={repr(super())}'
+                ')')
 
     def __add__(self, rhs):
         return String.create(self.name, self.line, self.offset, super().__add__(rhs))
@@ -83,7 +105,7 @@ class ReadStream:
 
     def read(self, count):
         chars = tuple(self.getchar() for _ in range(count))
-        return (''.join(c or '' for c in chars), chars)
+        return (''.join(filter(lambda v: v, chars)), chars)
 
     def write(self, chars):
         self.pending += reversed(chars)
@@ -106,32 +128,14 @@ class WriteStream:
 # -----------------------------------------------------------------------------
 
 
-BLOCK_START_KEYWORD = {
-    'class', 'def', 'for', 'while',
-    'if', 'elif', 'else',
-    'match', 'case',
-    'try', 'except', 'finally',
-    'with',
-}
-
-BLOCK_SECOND_KEYWORD = {
-    'elif', 'else', 'case',
-    'except', 'finally',
-}
-
-BLOCK_END_KEYWORD = {
-    'pass',
-    'continue', 'break',
-    'return', 'yield',
-    'raise',
-}
-
-LOOP_KEYWORD = {'for', 'while'}
-
-REDUCE_KEYWORD = {
-    'continue': LOOP_KEYWORD,
-    'return': {'def'},
-}
+class CharType(Enum):
+    EOL = 1
+    SPACE = 2
+    WORD = 3
+    QUOTE = 4
+    DQUOTE = 5
+    COMMENT = 6
+    OPDEL = 7
 
 
 class TokenType(Enum):
@@ -142,17 +146,19 @@ class TokenType(Enum):
     COLON = 5
     OPDEL = 6
     STRING = 7
+    ERROR = -1
 
 
 class Token:
-    def __init__(self, token_type, data):
+    def __init__(self, token_type, data=''):
         self.type = token_type
         self.data = data
 
     def __repr__(self):
-        return ('(Token:'
-                f' type={repr(self.type)},'
-                f' data={repr(self.data)})')
+        return ('(Token'
+                f': type={repr(self.type)}'
+                f', data={repr(self.data)}'
+                ')')
 
     def __str__(self):
         return self.data
@@ -176,128 +182,108 @@ class Token:
 TOKEN_EOL = Token(TokenType.EOL, '\n')
 
 
-class BlockStatus:
-    def __init__(self, keyword, line, indent_start, indent_block):
-        self.keyword = keyword
-        self.line = line
-        self.indent_start = indent_start
-        self.indent_block = indent_block
-        self.statement = 0
-
-    def __repr__(self):
-        return ('(BlockStatus:'
-                f' keyword={repr(self.keyword)},'
-                f' line={self.line},'
-                f' indent_start={self.indent_start},'
-                f' indent_block={self.indent_block},'
-                f' statement={self.statement})')
-
-
 class LineStatus:
-    def __init__(self, tokens):
-        self.number = 0
-        self.previous = 0
+    def __init__(self, tokens, source_line):
+        self.block = None
+        self.number = None
         self.indent = 0
+        self.error = False
         self.empty = True
         self.comment = False
         self.word = None
-        self.colon = False
+        self.keyword_start = None
+        self.keyword_second = None
+        self.keyword_block = None
+        self.keyword_end = None
         self.statement = 0
-        self.block_start_line = 0
-        self.block_start_keyword = False
-        self.block_second_keyword = False
-        self.block_end_keyword = False
-        self.block_enter = False
-        self.block_leave = False
-        self.block_stack = []
+        self.source_line = source_line
         self.token = tokens
 
-        if not tokens:
-            return
-
-        token = tokens[0]
-        if token == TokenType.SPACE:
-            self.indent = self.getcolumn(token.data)
-            token = tokens[1]
-        if token == TokenType.WORD:
-            word = token.data
-            self.word = word
-            self.block_start_keyword = word in BLOCK_START_KEYWORD
-            self.block_second_keyword = word in BLOCK_SECOND_KEYWORD
-            self.block_end_keyword = word in BLOCK_END_KEYWORD
-        for index in range(len(tokens) - 1, -1, -1):
-            token = tokens[index]
-            if token.type not in (TokenType.EOL, TokenType.SPACE, TokenType.COMMENT):
-                self.empty = False
-                self.colon = token == TokenType.COLON
-                break
-
-        if self.empty:
-            self.comment = bool(sum(token.type == TokenType.COMMENT for token in tokens))
-
     def __repr__(self):
-        return ('(LineStatus:'
-                f' number={self.number},'
-                f' previous={self.previous},'
-                f' indent={self.indent},'
-                f' empty={self.empty},'
-                f' comment={self.comment},'
-                f' word={self.word},'
-                f' colon={self.colon},'
-                f' statement={self.statement}'
-                f' block_start_line={self.block_start_line},'
-                f' block_start_keyword={self.block_start_keyword},'
-                f' block_end_keyword={self.block_end_keyword},'
-                f' block_enter={self.block_enter},'
-                f' block_leave={self.block_leave},'
-                f' block_stack={repr(self.block_stack)},'
-                f' token={repr(self.token)})')
-
-    def isblock(self, keyword):
-        return self.block_stack[-1].keyword == keyword
+        return ('(LineStatus'
+                f': number={self.number}'
+                f', indent={self.indent}'
+                f', error={self.error}'
+                f', empty={self.empty}'
+                f', comment={self.comment}'
+                f', keyword_block={repr(self.keyword_block)}'
+                f', keyword_start={repr(self.keyword_start)}'
+                f', keyword_second={repr(self.keyword_second)}'
+                f', keyword_end={repr(self.keyword_end)}'
+                f', statement={repr(self.statement)}'
+                f', source_line={repr(self.source_line)}'
+                f', token={repr(self.token)}'
+                ')')
 
     def iscomment(self):
         return self.empty and self.comment
 
-    def checkcomment(self, indent):
-        return self.iscomment() and self.indent == indent
-
-    def getdebug(self):
-        ltext = self.getline().replace('\n', '')
-        return (f'N={self.number:03}'
-                f':P={self.previous:03}'
-                f':D={len(self.block_stack)}'
-                f':S={self.statement:02}'
-                f':{self.block_stack[-1].keyword:8}'
-                f':{ltext}')
+    def getline(self):
+        return ''.join(str(t) for t in self.token)
 
     @staticmethod
-    def getcolumn(line):
-        tab = TAB_WIDTH
-        column = 0
-        for char in line:
-            if char == ' ':
-                column += 1
-                continue
-            if char == '\t':
-                column += tab - (column % tab)
-                continue
-        return column
+    def inkeyword(table, word):
+        return word if word in table else None
 
-    def getline(self):
-        return ''.join(t.data for t in self.token)
+    def setword(self, word):
+        self.word = word
+        self.keyword_start = self.inkeyword(KEYWORD_START, word)
+        self.keyword_second = self.inkeyword(KEYWORD_SECOND, word)
+        self.keyword_end = self.inkeyword(KEYWORD_END, word)
 
     def setempty(self):
         self.indent = 0
         self.empty = True
+        self.comment = False
         self.token = []
 
     def fixeol(self):
         if self.token[-1] != TokenType.EOL:
             self.token += (TOKEN_EOL,)
 
+    def getdebug(self):
+        ltext = self.getline()
+        if ltext and ltext[-1] == '\n':
+            ltext = ltext[:-1]
+        return (f'{"E" if self.error else "N"}={self.number:03}:{self.source_line:03}:'
+                f'L={self.block.level if self.block else 0}:'
+                f'I={self.indent:02}:'
+                f'S={self.statement:02}:'
+                f'{self.block.keyword if self.block else "<<NONE>>":8}:'
+                f'{ltext}')
+
+
+class BlockStatus:
+    def __init__(self, parent=None, keyword=None, line_start=None, indent_start=0):
+        self.parent = parent
+        self.children = []
+        self.keyword = keyword if keyword else '[[main]]'
+        self.level = parent.level + 1 if parent else 0
+        self.indent_start = indent_start
+        self.indent_block = 0
+        self.line_start = line_start
+        self.line_end = None
+        self.statement = 0
+
+    def __repr__(self):
+        return ('(BlockStatus'
+                f': keyword={repr(self.keyword)}'
+                f', level={self.level}'
+                f', indent_start={self.indent_start}'
+                f', indent_block={self.indent_block}'
+                f', line_start={self.line_start}'
+                f', line_end={self.line_end}'
+                f', statement={self.statement}'
+                ')')
+
+    def append(self, child):
+        self.children.append(child)
+
 
 class Lexer:
+    BRACKET_OPEN = {'(': ')', '[': ']', '{': '}'}
+    BRACKET_CLOSE = {')', ']', '}'}
+
     WORD_CHAR = set(
         '0123456789'
         'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -316,50 +302,53 @@ class Lexer:
         '->', '...',
 
         '(', ')', '[', ']', '{', '}',
+
+        '!', '$', ',', '.', '?', '\\', '`',
     }
 
     def __init__(self, stream, **option):
+        self.char_type = {
+            '\n': self.geteol,
+            "'": self.getquote,
+            '"': self.getdquote,
+            '#': self.getcomment,
+            '\x7F': self.getword,
+        }
+        self.char_type.update({chr(c): self.getspace for c in range(33) if c != 10})
+        self.char_type.update({c: self.getword for c in Lexer.WORD_CHAR})
+        self.char_type.update({c[0]: self.getopdel for c in Lexer.OPDELS})
+
+        self.debug = self.getoption(option, 'debug', False)
+        self.tab_width = self.getoption(option, 'tab', DEFAULT_TAB_WIDTH)
         self.stream = stream
-        self.debug = option['debug'] if 'debug' in option else False
+        self.errors = []
+
+    def seterror(self, err):
+        self.errors.append(err)
+        return self
+
+    @staticmethod
+    def getoption(option, name, defval):
+        return option[name] if name in option else defval
+
+    def getcolumn(self, line):
+        tab = self.tab_width
+        column = 0
+        for char in line:
+            if char == ' ':
+                column += 1
+                continue
+            if char == '\t':
+                column += tab - (column % tab)
+                continue
+        return column
 
     def gettoken(self):
         char = self.stream.getchar()
-        if char is None:
-            return None
-        if char == '\n':
-            return TOKEN_EOL
-        if ord(char) < 33:
-            return self.getspace(char)
-        if char in self.WORD_CHAR or ord(char) >= 0x80:
-            return self.getword(char)
-        if char == '"':
-            next_str, next_chars = self.stream.read(2)
-            if next_str == '""':
-                return self.getlongquote(char + next_str)
-            self.stream.write(next_chars)
-            return self.getquote(char)
-        if char == "'":
-            return self.getquote(char)
-        if char == '#':
-            return self.getcomment(char)
+        return self.char_type[min(char, '\x7F')](char) if char else None
 
-        next_str, next_chars = self.stream.read(2)
-        if len(next_str) > 1:
-            check_str = char + next_str
-            if check_str in self.OPDELS:
-                return Token(TokenType.OPDEL, check_str)
-            self.stream.putchar(next_chars[1])
-        if next_str:
-            check_str = char + next_str[0]
-            if check_str in self.OPDELS:
-                return Token(TokenType.OPDEL, check_str)
-            if check_str == '\\\n':
-                return self.getspace(check_str)
-            self.stream.putchar(next_chars[0])
-
-        if char == ':':
-            return Token(TokenType.COLON, char)
-        return Token(TokenType.OPDEL, char)
+    def geteol(self, char):
+        return Token(TokenType.EOL, char)
 
     def getspace(self, space):
         stream = self.stream
@@ -387,10 +376,7 @@ class Lexer:
     def getword(self, word):
         word_char = self.WORD_CHAR
         stream = self.stream
-        while True:
-            char = stream.getchar()
-            if char is None:
-                break
+        for char in iter(stream.getchar, None):
             if char not in word_char and ord(char) < 0x80:
                 stream.putchar(char)
                 break
@@ -401,10 +387,7 @@ class Lexer:
         stream = self.stream
         escape = False
         qch = str(qstr)
-        while True:
-            char = stream.getchar()
-            if char is None:
-                break
+        for char in iter(stream.getchar, None):
             if escape:
                 qstr += char
                 escape = False
@@ -420,12 +403,16 @@ class Lexer:
                 break
         return Token(TokenType.STRING, qstr)
 
+    def getdquote(self, char):
+        next_str, next_chars = self.stream.read(2)
+        if next_str == '""':
+            return self.getlongquote(char + next_str)
+        self.stream.write(next_chars)
+        return self.getquote(char)
+
     def getlongquote(self, qstr):
         stream = self.stream
-        while True:
-            char = stream.getchar()
-            if char is None:
-                break
+        for char in iter(stream.getchar, None):
             if char == '"':
                 next_str, next_chars = stream.read(2)
                 if next_str == '""':
@@ -437,107 +424,37 @@ class Lexer:
 
     def getcomment(self, cstr):
         stream = self.stream
-        while True:
-            char = stream.getchar()
-            if char is None:
-                break
+        for char in iter(stream.getchar, None):
             if char == '\n':
                 stream.putchar(char)
                 break
             cstr += char
         return Token(TokenType.COMMENT, cstr)
 
+    def getopdel(self, char):
+        next_str, next_chars = self.stream.read(2)
+        if len(next_str) > 1:
+            check_str = char + next_str
+            if check_str in self.OPDELS:
+                return Token(TokenType.OPDEL, check_str)
+            self.stream.putchar(next_chars[1])
+        if next_str:
+            check_str = char + next_str[0]
+            if check_str in self.OPDELS:
+                return Token(TokenType.OPDEL, check_str)
+            if check_str == '\\\n':
+                return self.getspace(check_str)
+            self.stream.putchar(next_chars[0])
+        if char == ':':
+            return Token(TokenType.COLON, char)
+        return Token(TokenType.OPDEL, char)
 
-class Parser(Lexer):
-    BRACKET_OPEN = {'(': ')', '[': ']', '{': '}'}
-    BRACKET_CLOSE = {')', ']', '}'}
-
-    def __init__(self, stream, **option):
-        super().__init__(stream, **option)
-        self.def_block_end = option['defend'] if 'defend' in option else 'pass'
-        self.loop_block_end = option['loopend'] if 'loopend' in option else 'pass'
-        self.classdefnl = option['classdefnl'] if 'classdefnl' in option else False
-        self.error = []
-
-        lines = []
-
-        block_keyword = '[main]'
-        block_start_line = 0
-        block_status = BlockStatus(block_keyword, block_start_line, -1, 0)
-        block_stack = [block_status]
-
-        statement_line = None
-        last_statement = 0
-        last_indent = 0
-        line_indent = 0
-        block_enter = None
-        while True:
-            if statement_line:
-                last_statement = statement_line
-                statement_line = None
-
-            line = self.readline()
-            if not line:
-                break
-
-            line_number = len(lines)
-            if not line.empty:
-                for stat in block_stack:
-                    stat.statement += 1
-
-                line_indent = line.indent
-                line.block_enter = line_indent > last_indent
-                line.block_leave = line_indent < last_indent
-
-                if line.block_leave:
-                    while line_indent <= block_stack[-1].indent_start:
-                        block_stack.pop()
-                        block_status = block_stack[-1]
-                    block_start_line = block_status.line
-                    block_keyword = block_status.keyword
-
-                if block_enter:
-                    block_status.indent_block = line_indent
-                    block_enter = False
-
-                if line.block_start_keyword and line.colon:
-                    if line_indent <= block_status.indent_start:
-                        block_stack.pop()
-                    block_start_line = line_number
-                    block_keyword = line.word
-                    block_status = BlockStatus(block_keyword, block_start_line,
-                                               line_indent, line_indent)
-                    block_stack.append(block_status)
-                    block_enter = True
-
-                statement_line = line_number
-                last_indent = line_indent
-
-            elif line.comment and line_indent == line.indent:
-                statement_line = line_number
-
-            line.number = line_number
-            line.previous = last_statement
-            line.block_start_line = block_start_line
-            line.block_stack = list(block_stack)
-            line.statement = block_status.statement
-
-            if self.debug:
-                print(line.getdebug())
-
-            lines.append(line)
-
-        self.lines = lines
-        self.last_statement = last_statement
-
-    def readline(self):
-        line = []
+    def getline(self):
+        error = False
+        tokens = []
         stack = []
-        while True:
-            token = self.gettoken()
-            if token is None:
-                break
-            line.append(token)
+        for token in iter(self.gettoken, None):
+            tokens.append(token)
             if token == TokenType.EOL:
                 if stack:
                     continue
@@ -547,122 +464,305 @@ class Parser(Lexer):
                 stack.append(self.BRACKET_OPEN[char])
                 continue
             if char in self.BRACKET_CLOSE:
-                if stack and char != stack.pop():
-                    self.error.append((char, "error: unmatched parentheses/bracket"))
-                    stack = []
+                if not stack or char != stack.pop():
+                    self.seterror((char, "error: unmatched parentheses/bracket"))
+                    error = True
                 continue
-        if not line:
+        if not tokens:
             return None
+        if error:
+            tokens.insert(0, Token(TokenType.ERROR))
+        return tokens
 
-        return LineStatus(tuple(line))
 
-    def append_block_end(self):
-        if self.lines:
-            self.lines[-1].fixeol()
-        line_number = self.last_statement
-        if line_number > 1:
-            self.insert_block_end(line_number, len(self.lines), 0)
-        while line_number > 1:
-            line = self.lines[line_number]
-            line_number = line.previous
-            self.insert_block_end(line_number, line.number, line.indent)
+class Parser(Lexer):
+    def __init__(self, stream, **option):
+        super().__init__(stream, **option)
+        self.debug_line = self.getoption(option, 'debug_line', False)
+        self.debug_append = self.getoption(option, 'debug_append', False)
+        self.debug_remove = self.getoption(option, 'debug_remove', False)
 
-    def insert_block_end(self, line_number, line_number_end, indent):
-        line = self.lines[line_number]
-        insert_line_number = line.number
-        block_stack = line.block_stack
-        stack_top = reduce(lambda v, s: v + int(s.indent_block <= indent), block_stack, 0)
-        stack_end = len(block_stack)
+        self.def_block_end = self.getoption(option, 'defend', 'pass')
+        self.loop_block_end = self.getoption(option, 'loopend', 'pass')
+        self.classdefnl = self.getoption(option, 'classdefnl', False)
 
-        eol = TOKEN_EOL
-        for block_status in reversed(block_stack[stack_top:stack_end]):
-            line_block_stack = block_stack[:stack_end]
-            stack_end -= 1
+        self.append_keyword_map = {
+            'def': self.def_block_end,
+            'for': self.loop_block_end,
+            'while': self.loop_block_end,
+        }
+        self.remove_keyword_map = {
+            None: {},
+            'pass': KEYWORD_BLOCK,
+            'continue': KEYWORD_LOOP, 'break': {},
+            'return': 'def', 'yield': {},
+            'raise': {},
+        }
 
-            if line.block_end_keyword and line.indent == block_status.indent_block:
-                continue
+        self.error = False
+        self.block = BlockStatus(None, '[[TEXT]]', 0)
+        self.block_stack = [self.block]
+        self.block_enter = None
+        self.last_indent = 0
+        self.line = []
+        self.indent_table = {}
+        self.indent_list = []
+        self.indent_depth = self.tab_width
 
-            line_number_max = min(line_number_end, len(self.lines) - 1)
-            skip_comment = False
-            while line_number < line_number_max:
-                check_line = self.lines[line_number + 1]
-                if not check_line.checkcomment(block_status.indent_block):
-                    break
-                line = check_line
-                insert_line_number = line.number
-                skip_comment = True
-                line_number += 1
+        self.append_newline = False
 
-            block_keyword = block_status.keyword
-            block_end = 'pass'
-            if block_keyword == 'def':
-                block_end = self.def_block_end
-            elif block_keyword in LOOP_KEYWORD:
-                block_end = self.loop_block_end
-            if (not skip_comment and self.classdefnl and
-                    block_keyword == 'class' and line.isblock('def')):
-                line_number += 1
-                line = LineStatus([eol])
-                line.number = insert_line_number
-                line.block_stack = line_block_stack
-                self.lines.insert(line_number, line)
-                line_number_end += 1
+        self.block.statement = 1
+        self.parse_line()
 
-            line_number += 1
-            line_indent = ' ' * block_status.indent_block
-            token = [Token(TokenType.SPACE, line_indent),
-                     Token(TokenType.WORD, block_end), eol]
-            line = LineStatus(token)
-            line.number = insert_line_number
-            line.block_stack = line_block_stack
-            self.lines.insert(line_number, line)
-            line_number_end += 1
-
-    def remove_block_end(self):
-        for line in self.lines:
-            if not line.block_leave:
-                continue
-            line_number = line.previous
-            while line_number > 1:
-                line = self.lines[line_number]
-                if line.statement < 2:
-                    break
-                block_keyword = line.block_stack[-1].keyword
-                block_end = line.getline().strip()
-                if block_keyword not in REDUCE_KEYWORD.get(block_end, tuple()):
-                    break
-                line.setempty()
-                line_number -= 1
-
-        for line in self.lines:
-            if line.statement >= 2 and line.getline().strip() == 'pass':
-                line.setempty()
-                if line.block_stack[-1].keyword != 'class':
-                    continue
-                line_number = line.number
-                while line_number > 2:
-                    line_number -= 1
-                    line = self.lines[line_number]
-                    if line.getline().strip():
-                        break
-                    line.setempty()
-
-        for line in reversed(self.lines):
-            if line.empty:
-                continue
-            if line.statement < 2:
-                break
-            block_keyword = line.block_stack[-1].keyword
-            block_end = line.getline().strip()
-            if block_keyword in REDUCE_KEYWORD.get(block_end, tuple()):
-                line.setempty()
-            break
+        if self.debug_line:
+            for line in self.line:
+                print(line.getdebug())
 
     def getsource(self):
-        text = ''
-        for line in self.lines:
-            text += line.getline()
-        return text
+        return ''.join(line.getline() for line in self.line)
+
+    def push_block(self, block):
+        self.block.append(block)
+        self.block_stack.append(block)
+        self.block = block
+        return block
+
+    def pop_block(self):
+        block = self.block_stack.pop()
+        self.block = self.block_stack[-1]
+        self.block.statement += block.statement
+        return block
+
+    def add_indent(self, indent, space):
+        indent_map = self.indent_table.get(indent, None)
+        if not indent_map:
+            indent_map = {}
+            self.indent_table[indent] = indent_map
+        indent_count = indent_map.get(space, 0)
+        indent_map[space] = indent_count + 1
+
+    def nextline(self, tokens):
+        token = tokens[0]
+        status = LineStatus(tokens, token.data.line)
+        if token == TokenType.SPACE:
+            status.indent = self.getcolumn(token.data)
+            self.add_indent(status.indent, token.data)
+            token = None if len(tokens) < 2 else tokens[1]
+        elif token == TokenType.ERROR:
+            status.error = True
+            return status
+        if token:
+            if token == TokenType.COMMENT:
+                status.comment = True
+            elif token != TokenType.EOL:
+                status.empty = False
+                if token == TokenType.WORD:
+                    status.setword(token.data)
+        for token in reversed(status.token):
+            if token.type not in (TokenType.EOL, TokenType.SPACE, TokenType.COMMENT):
+                if token == TokenType.COLON:
+                    status.keyword_block = status.keyword_start or status.keyword_second
+                break
+        return status
+
+    def set_block_enter(self, status):
+        self.block.indent_block = self.last_indent
+        self.block_enter = BlockStatus(
+            self.block, status.keyword_block, status.number, status.indent)
+
+    def set_block_leave(self, line_number):
+        if len(self.block_stack) > 1:
+            self.block.line_end = line_number
+            self.pop_block()
+            self.last_indent = self.block.indent_block
+            return True
+        return False
+
+    def parse_line(self):
+        for tokens in iter(self.getline, None):
+            status = self.nextline(tokens)
+            status.number = len(self.line)
+            self.line.append(status)
+
+            if self.block_enter:
+                self.push_block(self.block_enter)
+                self.block_enter = None
+            status.block = self.block
+
+            if status.empty:
+                continue
+
+            if status.indent == self.last_indent:
+                if not self.block.statement and status.keyword_block:
+                    self.set_block_leave(status.number)
+                self.parse_block_statement(status)
+            elif status.indent > self.last_indent:
+                self.parse_block_enter(status)
+            else:
+                self.parse_block_leave(status)
+
+        if self.block_enter:
+            self.push_block(self.block_enter)
+
+        line_number = len(self.line)
+        while self.set_block_leave(line_number):
+            pass
+        self.block.line_end = line_number
+
+    def parse_block_statement(self, status):
+        self.block.statement += 1
+        status.statement = self.block.statement
+        if self.error or status.error:
+            self.error = True
+            return False
+        if status.keyword_block:
+            self.set_block_enter(status)
+        return True
+
+    def parse_block_enter(self, status):
+        if self.block.statement:
+            self.error = True
+            return False
+        if not self.parse_block_statement(status):
+            return False
+        self.last_indent = status.indent
+        self.block.indent_block = status.indent
+        return True
+
+    def parse_block_leave(self, status):
+        if status.indent > self.block.indent_start:
+            self.last_indent = status.indent
+            self.error = True
+            return False
+
+        self.error = False
+        while (self.set_block_leave(status.number) and
+               status.indent <= self.block.indent_start):
+            pass
+        status.block = self.block
+        self.last_indent = status.indent
+        return self.parse_block_statement(status)
+
+    def fixeof(self):
+        if self.line:
+            self.line[-1].fixeol()
+
+    def scan_block_end(self, indent, start, end):
+        line_number = end - 1
+        while line_number > start:
+            line = self.line[line_number]
+            if not line.empty or line.comment:
+                if indent <= line.indent:
+                    return line_number
+            line_number -= 1
+        return line_number
+
+    def initialize_indent_table(self):
+        def most(iterable):
+            return sorted(iterable, reverse=True)[0][1]
+        for key in self.indent_table:
+            self.indent_table[key] = most(
+                (item[1], item[0]) for item in self.indent_table[key].items())
+        indents = sorted(self.indent_table)
+        self.indent_list = indents
+        delta = [indents[n+1] - indents[n] for n in range(len(indents) - 1)]
+        if delta:
+            self.indent_depth = most((delta.count(n), n) for n in set(delta))
+
+    def get_indent_space(self, indent):
+        space = self.indent_table.get(indent, None)
+        if space:
+            return space
+        for pos in self.indent_list:
+            if indent < pos:
+                return self.indent_table[pos]
+        return ' ' * indent
+
+    def append_block_end(self):
+        self.initialize_indent_table()
+        self.insert_children_block_end(self.block)
+
+    def insert_children_block_end(self, block):
+        for child in reversed(block.children):
+            self.insert_block_end(child)
+
+    def insert_block_end(self, block):
+        keyword = self.append_keyword_map.get(block.keyword, 'pass')
+        line_number = self.scan_block_end(block.indent_block,
+                                          block.line_start, block.line_end)
+
+        if self.debug_append:
+            print('BLOCK'
+                  f':{block.line_start:03}-{block.line_end:03}'
+                  f':L={block.level}'
+                  f':S={block.statement}'
+                  f':{self.line[block.line_start].keyword_block} -> {keyword}')
+
+        line = self.line[line_number]
+        if block.indent_block < line.indent or not line.keyword_end:
+            indent = block.indent_block
+            if line_number == block.line_start:
+                indent += self.indent_depth
+            line_number += 1
+            token = [Token(TokenType.SPACE, self.get_indent_space(indent)),
+                     Token(TokenType.WORD, keyword),
+                     TOKEN_EOL]
+            status = LineStatus(token, line.source_line)
+            status.number = line_number
+            self.line.insert(status.number, status)
+
+        if self.classdefnl:
+            newline = self.append_newline
+            self.append_newline = False
+            if block.keyword == 'class':
+                self.append_newline = True
+            elif newline and block.keyword == 'def':
+                line_number += 1
+                status = LineStatus([TOKEN_EOL], line.source_line)
+                status.number = line_number
+                self.line.insert(status.number, status)
+
+        self.insert_children_block_end(block)
+
+    def remove_block_end(self):
+        self.delete_children_block_end(self.block)
+
+    def delete_children_block_end(self, block):
+        for child in reversed(block.children):
+            self.delete_block_end(child)
+
+    def delete_block_end(self, block):
+        if self.debug_remove:
+            print('BLOCK'
+                  f':{block.line_start:03}-{block.line_end:03}'
+                  f':L={block.level}'
+                  f':S={block.statement}'
+                  f':{self.line[block.line_start].keyword_block}')
+
+        remove_empty = False
+        line_end = block.line_end
+        while line_end > block.line_start:
+            line_number = self.scan_block_end(block.indent_block,
+                                              block.line_start, line_end)
+            if remove_empty:
+                for lnum in range(line_number + 1, line_end):
+                    self.line[lnum].setempty()
+
+            line = self.line[line_number]
+            if line.comment or not line.empty:
+                if (line.indent <= block.indent_start or
+                    block.indent_block < line.indent or
+                    line.comment or line.statement < 2 or
+                    not line.keyword_end):
+                    break
+                if (block.keyword not in self.remove_keyword_map[line.keyword_end] or
+                    line.keyword_end != line.getline().strip()):
+                    break
+            line.setempty()
+            remove_empty = True
+            line_end = line_number
+
+        self.delete_children_block_end(block)
 
 
 # -----------------------------------------------------------------------------
@@ -672,10 +772,7 @@ if __name__ == '__main__':
     import argparse
 
     def main():
-        global TAB_WIDTH
-
         parser = argparse.ArgumentParser()
-        parser.add_argument('-d', '--debug', action='store_true', default=False)
         parser.add_argument('-q', '--quiet', action='store_true', default=False)
         parser.add_argument('-e', '--error-stop', action='store_true', default=False)
         parser.add_argument('-a', '--append', action='store_true', default=False)
@@ -684,20 +781,22 @@ if __name__ == '__main__':
         parser.add_argument('--class-def-nl', action='store_false', default=True)
         parser.add_argument('--def-return', action='store_true', default=False)
         parser.add_argument('--loop-continue', action='store_true', default=False)
+
+        parser.add_argument('-d', '--debug', action='store_true', default=False)
+        parser.add_argument('--debug-line', action='store_true', default=False)
+        parser.add_argument('--debug-append', action='store_true', default=False)
+        parser.add_argument('--debug-remove', action='store_true', default=False)
+
         parser.add_argument('inpfile', metavar='INP', nargs='?', default='-')
         parser.add_argument('outfile', metavar='OUT', nargs='?', default='-')
 
         args = parser.parse_args()
-        TAB_WIDTH = args.tab_width
+        tab_width = args.tab_width
         classdefnl = args.class_def_nl
         defend = 'return' if args.def_return else 'pass'
         loopend = 'continue' if args.loop_continue else 'pass'
 
-        if args.debug:
-            print(f'option: tab = {TAB_WIDTH}')
-            print(f'option: def - {defend}')
-            print(f'option: loop - {loopend}')
-        else:
+        if not args.debug:
             if not args.append and not args.remove:
                 print('option error: set either option {-a|--append} or {-r|--remove}.')
                 parser.print_help()
@@ -708,16 +807,23 @@ if __name__ == '__main__':
                 return
 
         parser = Parser(ReadStream(args.inpfile),
+                        tab_width=tab_width,
                         classdefnl=classdefnl,
                         defend=defend,
                         loopend=loopend,
+                        debug_line=args.debug_line or args.debug,
+                        debug_append=args.debug_append or args.debug,
+                        debug_remove=args.debug_remove or args.debug,
                         debug=args.debug)
+
         if parser.error and args.error_stop:
-            for error, msg in parser.error:
+            for error, msg in parser.errors:
                 sys.stderr.write(f'{error.name}:{error.line}: {msg}\n')
             if args.error_stop:
                 sys.exit(2)
 
+        if args.append or args.remove:
+            parser.fixeof()
         if args.remove:
             parser.remove_block_end()
         if args.append:
@@ -727,5 +833,6 @@ if __name__ == '__main__':
         WriteStream(args.outfile).write(parser.getsource())
 
     main()
+
 
 # -----------------------------------------------------------------------------
