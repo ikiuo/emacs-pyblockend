@@ -85,7 +85,6 @@ class ReadStream:
     def __enter__(self):
         if not self.stdin and not self.bstream:
             self.stream.__enter__()
-            pass
         return self
 
     def __exit__(self, etype, value, trace):
@@ -142,7 +141,6 @@ class WriteStream:
     def __enter__(self):
         if not self.stdout and not self.bstream:
             self.stream.__enter__()
-            pass
         return self
 
     def __exit__(self, etype, value, trace):
@@ -332,7 +330,7 @@ class Lexer:
 
         '(', ')', '[', ']', '{', '}',
 
-        '!', '$', ',', '.', '?', '\\', '`',
+        '!', '$', ',', '.', ';', '?', '\\', '`',
     }
 
     def __init__(self, stream, **option):
