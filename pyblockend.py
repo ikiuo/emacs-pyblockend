@@ -71,14 +71,27 @@ class String(str):
 
 class ReadStream:
     def __init__(self, name, stream=None):
-        self.name = name if name != '-' else '[STDIN]'
+        self.stdin = name == '-'
+        self.bstream = bool(stream)
+        self.name = '[STDIN]' if self.stdin else name
         self.stream = (stream if stream else
-                       (sys.stdin if name == '-' else open(name)))
+                       sys.stdin if self.stdin else open(name))
         self.lines = []
         self.line = ''
         self.number = 0
         self.offset = 0
         self.pending = []
+
+    def __enter__(self):
+        if not self.stdin and not self.bstream:
+            self.stream.__enter__()
+            pass
+        return self
+
+    def __exit__(self, etype, value, trace):
+        if not self.stdin and not self.bstream:
+            return self.stream.__exit__(etype, value, trace)
+        return None
 
     def getline(self):
         line = self.stream.readline()
@@ -103,23 +116,39 @@ class ReadStream:
         self.pending.append(char)
         return self
 
-    def read(self, count):
+    def readchar(self, count):
         chars = tuple(self.getchar() for _ in range(count))
         return (''.join(filter(lambda v: v, chars)), chars)
 
-    def write(self, chars):
+    def writechar(self, chars):
         self.pending += reversed(chars)
         return self
 
     def emptychar(self):
         return String.create(self.name, self.number, self.offset, '')
 
+    def read(self):
+        return self.stream.read()
+
 
 class WriteStream:
     def __init__(self, name, stream=None):
-        self.name = name if name != '-' else '[STDOUT]'
+        self.stdout = name == '-'
+        self.bstream = bool(stream)
+        self.name = '[STDOUT]' if self.stdout else name
         self.stream = (stream if stream else
-                       (sys.stdout if name == '-' else open(name, 'w')))
+                       (sys.stdout if self.stdout else open(name, 'w')))
+
+    def __enter__(self):
+        if not self.stdout and not self.bstream:
+            self.stream.__enter__()
+            pass
+        return self
+
+    def __exit__(self, etype, value, trace):
+        if not self.stdout and not self.bstream:
+            return self.stream.__exit__(etype, value, trace)
+        return None
 
     def write(self, data):
         return self.stream.write(data)
@@ -404,21 +433,21 @@ class Lexer:
         return Token(TokenType.STRING, qstr)
 
     def getdquote(self, char):
-        next_str, next_chars = self.stream.read(2)
+        next_str, next_chars = self.stream.readchar(2)
         if next_str == '""':
             return self.getlongquote(char + next_str)
-        self.stream.write(next_chars)
+        self.stream.writechar(next_chars)
         return self.getquote(char)
 
     def getlongquote(self, qstr):
         stream = self.stream
         for char in iter(stream.getchar, None):
             if char == '"':
-                next_str, next_chars = stream.read(2)
+                next_str, next_chars = stream.readchar(2)
                 if next_str == '""':
                     qstr += '"""'
                     break
-                stream.write(next_chars)
+                stream.writechar(next_chars)
             qstr += char
         return Token(TokenType.STRING, qstr)
 
@@ -432,7 +461,7 @@ class Lexer:
         return Token(TokenType.COMMENT, cstr)
 
     def getopdel(self, char):
-        next_str, next_chars = self.stream.read(2)
+        next_str, next_chars = self.stream.readchar(2)
         if len(next_str) > 1:
             check_str = char + next_str
             if check_str in self.OPDELS:
@@ -807,15 +836,16 @@ if __name__ == '__main__':
                 parser.print_help()
                 return
 
-        parser = Parser(ReadStream(args.inpfile),
-                        tab_width=tab_width,
-                        classdefnl=classdefnl,
-                        defend=defend,
-                        loopend=loopend,
-                        debug_line=args.debug_line or args.debug,
-                        debug_append=args.debug_append or args.debug,
-                        debug_remove=args.debug_remove or args.debug,
-                        debug=args.debug)
+        with ReadStream(args.inpfile) as stream:
+            parser = Parser(stream,
+                            tab_width=tab_width,
+                            classdefnl=classdefnl,
+                            defend=defend,
+                            loopend=loopend,
+                            debug_line=args.debug_line or args.debug,
+                            debug_append=args.debug_append or args.debug,
+                            debug_remove=args.debug_remove or args.debug,
+                            debug=args.debug)
 
         if parser.error and args.error_stop:
             for error, msg in parser.errors:
@@ -831,7 +861,9 @@ if __name__ == '__main__':
             parser.append_block_end()
         if args.debug and args.outfile == '.':
             return
-        WriteStream(args.outfile).write(parser.getsource())
+
+        with WriteStream(args.outfile) as stream:
+            stream.write(parser.getsource())
 
     main()
 
