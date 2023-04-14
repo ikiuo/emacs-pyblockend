@@ -345,18 +345,14 @@ class Lexer:
         self.char_type.update({c: self.getword for c in Lexer.WORD_CHAR})
         self.char_type.update({c[0]: self.getopdel for c in Lexer.OPDELS})
 
-        self.debug = self.getoption(option, 'debug', False)
-        self.tab_width = self.getoption(option, 'tab', DEFAULT_TAB_WIDTH)
+        self.debug = option.get('debug', False)
+        self.tab_width = option.get('tab', DEFAULT_TAB_WIDTH)
         self.stream = stream
         self.errors = []
 
     def seterror(self, err):
         self.errors.append(err)
         return self
-
-    @staticmethod
-    def getoption(option, name, defval):
-        return option[name] if name in option else defval
 
     def getcolumn(self, line):
         tab = self.tab_width
@@ -505,13 +501,13 @@ class Lexer:
 class Parser(Lexer):
     def __init__(self, stream, **option):
         super().__init__(stream, **option)
-        self.debug_line = self.getoption(option, 'debug_line', False)
-        self.debug_append = self.getoption(option, 'debug_append', False)
-        self.debug_remove = self.getoption(option, 'debug_remove', False)
+        self.debug_line = option.get('debug_line', False)
+        self.debug_append = option.get('debug_append', False)
+        self.debug_remove = option.get('debug_remove', False)
 
-        self.def_block_end = self.getoption(option, 'defend', 'pass')
-        self.loop_block_end = self.getoption(option, 'loopend', 'pass')
-        self.classdefnl = self.getoption(option, 'classdefnl', False)
+        self.def_block_end = option.get('defend', 'pass')
+        self.loop_block_end = option.get('loopend', 'pass')
+        self.classdefnl = option.get('classdefnl', False)
 
         self.append_keyword_map = {
             'def': self.def_block_end,
