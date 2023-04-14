@@ -32,6 +32,10 @@
 
 ;; ----------------------------------------------------------------------------
 
+(defvar py-blockend--temporary-buffer-name " *py-blockend-temporary*")
+
+;; ----------------------------------------------------------------------------
+
 (defun py-blockend-toggle-global ()
   (interactive)
   (setq py-blockend-global (null py-blockend-global)))
@@ -52,11 +56,7 @@
 
 (defun py-blockend-append-region (beg end)
   (interactive "r")
-  (py-blockend--command-region beg end py-blockend-command-append))
-
-(defun py-blockend-remove-region (beg end)
-  (interactive "r")
-  (py-blockend--command-region beg end py-blockend-command-remove))
+  (py-blockend--append-region beg end))
 
 (defun py-blockend-append-buffer (&optional keep)
   (interactive)
@@ -64,6 +64,12 @@
     (py-blockend-append-region (point-min) (point-max))
     (when keep (set-buffer-modified-p modified))
     nil))
+
+;; ----------------------------------------------------------------------------
+
+(defun py-blockend-remove-region (beg end)
+  (interactive "r")
+  (py-blockend--remove-region beg end))
 
 (defun py-blockend-remove-buffer (&optional keep)
   (interactive)
@@ -76,110 +82,87 @@
 
 (defun py-blockend-goto-line (LINE)
   (interactive "nGoto Line: ")
-  (if py-blockend-mode
-      (let ((cbuf (current-buffer))
-            (tbuf (generate-new-buffer " *py-blockend-temporary*"))
-            (cb (buffer-string)) tb m n1 n2 nd)
-        (apply 'call-process-region (point-min) (point-max)
-               py-blockend-command nil tbuf nil
-               (split-string py-blockend-command-remove " "))
-        (set-buffer tbuf)
-        (setq tb (buffer-string))
-        (set-buffer cbuf)
-        (kill-buffer tbuf)
-        (cl-multiple-value-setq (m n1 n2 nd)
-          (cadr (py-blockend--updated-line-map cb tb)))
-        (if (< LINE n2)
-            (goto-line (car (rassoc LINE m)))
-          (end-of-buffer))
-        nil)
-    (goto-line LINE)))
+  (when py-blockend-mode
+    (let (exit output)
+      (cl-multiple-value-setq (exit output)
+        (py-blockend--execute-command (py-blockend--remove-command-line)
+                                      (point-min) (point-max)))
+      (ignore-errors
+        (setq LINE (car (rassoc LINE (py-blockend--compare-lines
+                                      (buffer-string) output)))))))
+  (goto-line LINE))
 
 ;; ----------------------------------------------------------------------------
 
-(defun py-blockend--command-call (beg end command-option)
-  (apply 'call-process-region beg end
-         py-blockend-command t t nil
-         (split-string command-option " ")))
+(defun py-blockend--append-command-line ()
+  (concat py-blockend-command " " py-blockend-command-append))
 
-(defun py-blockend--command-region (beg end command-option)
-  (let* ((modified (buffer-modified-p))
-         (pdata (py-blockend--prepare beg end))
-         wdata rdata cbuf ubuf rbeg rend rlen)
-    (cl-multiple-value-setq (wdata rdata cbuf) pdata)
-    (cl-multiple-value-setq (rbeg rend rlen) rdata)
-    (py-blockend--command-call rbeg rend command-option)
-    (setq ubuf (buffer-substring rbeg (point)))
-    (let (ulm grow udata wp wins)
-      (if (string= cbuf ubuf)
-          (set-buffer-modified-p modified)
-        (setq ulm (py-blockend--updated-line-map cbuf ubuf))
-        (cl-multiple-value-setq (grow udata) ulm))
-      (py-blockend--set-window-start-and-point
-       (dolist (wp wdata wins)
-         (add-to-list 'wins (py-blockend--update-point
-                             rbeg wp grow udata)))))))
+(defun py-blockend--append-region (&optional beg end)
+  (py-blockend--update-region (py-blockend--append-command-line) beg end))
 
-(defun py-blockend--prepare (beg end)
-  (let ((wins (py-blockend--window-start-and-point))
-        (bol-point (lambda (p) (goto-char p) (beginning-of-line) (point)))
-        (eol-point (lambda (p) (goto-char p) (end-of-line)
-                     (if (< (point) (point-min)) (forward-char)) (point)))
-        win wdata)
-    (save-excursion
-      (when (> beg end)
-        (cl-rotatef beg end))
-      ;; (setq beg (funcall bol-point beg))
-      ;; (setq end (funcall eol-point end))
-      (dolist (wp wins)
-        (let ((win (nth 0 wp))
-              (wpos (funcall bol-point (nth 1 wp)))
-              (bpos (nth 2 wp))
-              wline rline lpos cols)
-          (setq wline (count-screen-lines wpos bpos nil win))
-          (setq cols (- bpos (setq lpos (funcall bol-point bpos))))
-          (setq rline (count-lines beg lpos))
-          (when (> beg lpos)
-            (setq rline (- rline)))
-          (add-to-list 'wdata (list win wpos wline bpos rline cols) t nil))))
-    (list wdata
-          (list beg end (count-lines beg end))
-          (buffer-substring beg end))))
+(defun py-blockend--append-buffer ()
+  (py-blockend--append-region))
 
-(defun py-blockend--updated-line-map (b1 b2)
-  (let* ((s1 (split-string b1 "\n")) (n1 (length s1)) (p1 0) l1
-         (s2 (split-string b2 "\n")) (n2 (length s2)) (p2 0) l2
-         (grow (< n1 n2)) m)
-    (when grow
-      (cl-rotatef s1 s2)
-      (cl-rotatef n1 n2))
-    (while (< p1 n1)
-      (setq l1 (nth p1 s1)
-            l2 (nth p2 s2))
-      (setq m (append (list (cons p1 p2)) m))
-      (when (string= l1 l2)
-        (setq p2 (1+ p2)))
-      (setq p1 (1+ p1)))
-    (list grow (list m n1 n2 (- n1 n2)))))
+;; ----------------------------------------------------------------------------
 
-(defun py-blockend--update-point (rpos wdata grow udata)
-  (let (win wpos wline bpos rline cols)
-    (cl-multiple-value-setq (win wpos wline bpos rline cols) wdata)
-    (when (and udata (> rline 0))
-      (let (m n1 n2 nd)
-        (cl-multiple-value-setq (m n1 n2 nd) udata)
-        (if (< rline (if grow n1 n2))
-            (setq rline (if grow
-                            (car (rassoc rline m))
-                          (cdr (assoc rline m))))
-          (setq rline (+ rline (if grow nd (- nd))))))
-      (save-excursion
-        (goto-char rpos)
-        (line-move rline t)
-        (setq bpos (+ (point) cols))
-        (line-move-visual (- wline) t)
-        (setq wpos (point))))
-    (list win wpos bpos)))
+(defun py-blockend--remove-command-line ()
+  (concat py-blockend-command " " py-blockend-command-remove))
+
+(defun py-blockend--remove-region (&optional beg end)
+  (py-blockend--update-region (py-blockend--remove-command-line) beg end))
+
+(defun py-blockend--remove-buffer ()
+  (py-blockend--revmoe-region))
+
+;; ----------------------------------------------------------------------------
+
+(defun py-blockend--execute-command (command beg end)
+  (let ((curr (current-buffer))
+        (targ (generate-new-buffer py-blockend--temporary-buffer-name t))
+        exit output)
+    (setq exit (call-shell-region beg end command nil targ))
+    (set-buffer targ) (setq output (buffer-string))
+    (set-buffer curr) (kill-buffer targ)
+    (unless (eq exit 0)
+      (user-error "Error (exit code = %s): %s\nOutput:\n%s"
+                  exit command output))
+    (list exit output)))
+
+(defun py-blockend--update-region (command &optional beg end)
+  (cl-multiple-value-setq (beg end)
+    (py-blockend--fix-region beg end))
+  (let ((wdata (py-blockend--update-prepare beg end))
+        exit output input)
+    (cl-multiple-value-setq (exit output)
+      (py-blockend--execute-command command beg end))
+    (setq input (buffer-substring beg end))
+    (unless (string= input output)
+      (let ((lmap (py-blockend--compare-lines input output beg)))
+        (py-blockend--update-window beg end wdata lmap)))))
+
+;; ----------------------------------------------------------------------------
+
+(defun py-blockend--point-beginnig-of-line (pos)
+  (save-excursion (goto-char pos) (beginning-of-line) (point)))
+
+(defun py-blockend--point-end-of-line (pos)
+  (save-excursion (goto-char pos) (end-of-line) (point)))
+
+(defun py-blockend--fix-region (beg end)
+  (save-excursion
+    (unless beg (setq beg (point-min)))
+    (unless end (setq end (point-max)))
+    (when (> beg end)
+      (cl-rotatef beg end))
+    (setq beg (py-blockend--point-beginnig-of-line beg))
+    (goto-char end) (beginning-of-line)
+    (unless (eq end (point))
+      (end-of-line)
+      (if (eq end (point-max))
+          (insert "\n")
+        (forward-char))
+      (setq end (point))))
+  (list beg end))
 
 (defun py-blockend--window-start-and-point ()
   (mapcar (lambda (win)
@@ -187,11 +170,68 @@
           (get-buffer-window-list (current-buffer) nil t)))
 
 (defun py-blockend--set-window-start-and-point (wins)
-  (let (wp win start point)
+  (let (wp win wpos bpos)
     (dolist (wp wins)
-      (cl-multiple-value-setq (win start point) wp)
-      (set-window-start win start)
-      (set-window-point win point))))
+      (cl-multiple-value-setq (win wpos bpos) wp)
+      (set-window-start win wpos)
+      (set-window-point win bpos))))
+
+;; ----------------------------------------------------------------------------
+
+(defun py-blockend--update-prepare (beg end)
+  (let ((wins (py-blockend--window-start-and-point))
+        wdata wp win wpos wline bpos rline cols lpos)
+    (save-excursion
+      (dolist (wp wins)
+        (cl-multiple-value-setq (win wpos bpos) wp)
+        (setq wline (count-screen-lines wpos bpos nil win))
+        (setq lpos (py-blockend--point-beginnig-of-line bpos))
+        (setq cols (- bpos lpos))
+        (setq rline (count-lines beg lpos))
+        (when (> beg lpos) (setq rline (- rline)))
+        (add-to-list 'wdata (list win wpos wline bpos rline cols) t nil)))
+    wdata))
+
+(defun py-blockend--compare-lines (input output &optional update)
+  (let* ((ilines (split-string input "\n")) (ilen (length ilines))
+         (olines (split-string output "\n")) (olen (length olines))
+         (diff (- ilen olen)) (ipos 0) (opos 0)
+         iline oline lmap)
+    (when update (goto-char update) (beginning-of-line))
+    (while (or (< ipos ilen) (< opos olen))
+      (setq lmap (append (list (cons ipos opos)) lmap))
+      (setq iline (nth ipos ilines))
+      (setq oline (nth opos olines))
+      (cond
+       ((string= iline oline)
+        (when update (line-move 1 t) (beginning-of-line))
+        (setq ipos (1+ ipos))
+        (setq opos (1+ opos)))
+       ((> diff 0)
+        (when update (delete-line) (beginning-of-line))
+        (setq ipos (1+ ipos)))
+       ((< diff 0)
+        (when update (insert oline "\n"))
+        (setq opos (1+ opos)))))
+    (append (list (cons ipos opos)) lmap)))
+
+(defun py-blockend--update-window (beg end wdata lmap)
+  (let* ((ilen (caar lmap)) (olen (cdar lmap)) (dlen (- ilen olen))
+         wins wp win wpos wline bpos rline cols)
+    (dolist (wp wdata)
+      (cl-multiple-value-setq (win wpos wline bpos rline cols) wp)
+      (cond
+       ((< rline 0) nil)
+       ((< rline ilen) (setq rline (cdr (assoc rline lmap))))
+       (t (setq rline (- rline dlen))))
+      (when (>= rline 0)
+        (goto-char beg) (beginning-of-line)
+        (line-move rline t) (beginning-of-line)
+        (setq bpos (+ (point) cols))
+        (line-move-visual (- wline) t) (beginning-of-visual-line)
+        (setq wpos (point)))
+      (add-to-list 'wins (list win wpos bpos)))
+    (py-blockend--set-window-start-and-point wins)))
 
 ;; ----------------------------------------------------------------------------
 
@@ -200,7 +240,7 @@
 (defun py-blockend--before-save-hook ()
   (let ((win (py-blockend--window-start-and-point)) pbuf nbuf)
     (setq pbuf (buffer-string))
-    (py-blockend-remove-buffer)
+    (py-blockend--remove-buffer)
     (setq nbuf (buffer-string))
     (setq py-blockend--hook-temporary (list win pbuf nbuf))))
 
@@ -211,7 +251,7 @@
       (erase-buffer) (insert pbuf)
       (py-blockend--set-window-start-and-point wins))
     (when py-blockend-append-after-save
-      (py-blockend-append-buffer))
+      (py-blockend--append-buffer))
     (set-buffer-modified-p nil)
     (setq py-blockend--hook-temporary nil)))
 
@@ -240,6 +280,7 @@
       (goto-char (point-min)))
     (py-blockend--add-hooks))
    (t
+    (setq py-blockend-mode nil)
     (when py-blockend--mode-enable
       (setq py-blockend--mode-enable nil)
       (py-blockend-remove-buffer t))
