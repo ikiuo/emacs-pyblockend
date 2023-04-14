@@ -240,7 +240,7 @@
 (defun py-blockend--before-save-hook ()
   (let ((win (py-blockend--window-start-and-point)) pbuf nbuf)
     (setq pbuf (buffer-string))
-    (py-blockend--remove-buffer)
+    (py-blockend-remove-buffer t)
     (setq nbuf (buffer-string))
     (setq py-blockend--hook-temporary (list win pbuf nbuf))))
 
@@ -251,7 +251,7 @@
       (erase-buffer) (insert pbuf)
       (py-blockend--set-window-start-and-point wins))
     (when py-blockend-append-after-save
-      (py-blockend--append-buffer))
+      (py-blockend-append-buffer t))
     (set-buffer-modified-p nil)
     (setq py-blockend--hook-temporary nil)))
 
