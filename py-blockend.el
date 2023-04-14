@@ -237,6 +237,9 @@
 
 (defvar py-blockend--hook-temporary nil)
 
+(defun py-blockend--next-error-hook ()
+  (py-blockend-goto-line (line-number-at-pos)))
+
 (defun py-blockend--before-save-hook ()
   (let ((win (py-blockend--window-start-and-point)) pbuf nbuf)
     (setq pbuf (buffer-string))
@@ -256,10 +259,12 @@
     (setq py-blockend--hook-temporary nil)))
 
 (defun py-blockend--add-hooks ()
+  (add-hook 'next-error-hook 'py-blockend--next-error-hook nil t)
   (add-hook 'before-save-hook 'py-blockend--before-save-hook nil t)
   (add-hook 'after-save-hook 'py-blockend--after-save-hook nil t))
 
 (defun py-blockend--remove-hooks ()
+  (remove-hook 'next-error-hook 'py-blockend--next-error-hook t)
   (remove-hook 'before-save-hook 'py-blockend--before-save-hook t)
   (remove-hook 'after-save-hook 'py-blockend--after-save-hook t))
 
