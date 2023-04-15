@@ -112,7 +112,7 @@
   (py-blockend--update-region (py-blockend--remove-command-line) beg end))
 
 (defun py-blockend--remove-buffer ()
-  (py-blockend--revmoe-region))
+  (py-blockend--remove-region))
 
 ;; ----------------------------------------------------------------------------
 
