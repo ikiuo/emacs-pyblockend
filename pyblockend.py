@@ -34,39 +34,65 @@ KEYWORD_LOOP = {'for', 'while'}
 # -----------------------------------------------------------------------------
 
 
-class String(str):
-    def __init__(self, *args):
-        if args:
-            arg0 = args[0]
-            if isinstance(arg0, String):
-                self.name = arg0.name
-                self.line = arg0.line
-                self.offset = arg0.offset
-                return
-        self.name = None
-        self.line = None
-        self.offset = None
+class FileString:
+    def __init__(self, name, line, offset, data):
+        self.name = name
+        self.line = line
+        self.offset = offset
+        self.data = data
 
     def __repr__(self):
         return ('(String'
                 f': name={repr(self.name)}'
                 f', line={self.line}'
                 f', offset={self.offset}'
-                f', str={repr(super())}'
+                f', data={repr(self.data)}'
                 ')')
 
-    def __add__(self, rhs):
-        return String.create(self.name, self.line, self.offset, super().__add__(rhs))
+    def __str__(self):
+        return self.data
 
-    def setparam(self, name, line, offset):
-        self.name = name
-        self.line = line
-        self.offset = offset
+    def __format__(self, fmt):
+        return self.data.__format__(fmt)
+
+    def __hash__(self):
+        return hash(self.data)
+
+    def __iter__(self):
+        return iter(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __eq__(self, rhs):
+        return self.data.__eq__(self.getdata(rhs))
+
+    def __ne__(self, rhs):
+        return self.data.__ne__(self.getdata(rhs))
+
+    def __lt__(self, rhs):
+        return self.data.__lt__(self.getdata(rhs))
+
+    def __le__(self, rhs):
+        return self.data.__le__(self.getdata(rhs))
+
+    def __gt__(self, rhs):
+        return self.data.__gt__(self.getdata(rhs))
+
+    def __ge__(self, rhs):
+        return self.data.__ge__(self.getdata(rhs))
+
+    def __add__(self, rhs):
+        return FileString(self.name, self.line, self.offset,
+                          self.data + self.getdata(rhs))
+
+    def __iadd__(self, rhs):
+        self.data += self.getdata(rhs)
         return self
 
     @staticmethod
-    def create(name, line, offset, data=''):
-        return String(data).setparam(name, line, offset)
+    def getdata(rhs):
+        return rhs.data if isinstance(rhs, FileString) else rhs
 
 
 class ReadStream:
@@ -109,7 +135,7 @@ class ReadStream:
                 return None
         offset = self.offset
         self.offset = offset + 1
-        return String.create(self.name, self.number, offset, self.line[offset])
+        return FileString(self.name, self.number, offset, self.line[offset])
 
     def putchar(self, char):
         self.pending.append(char)
@@ -117,14 +143,14 @@ class ReadStream:
 
     def readchar(self, count):
         chars = tuple(self.getchar() for _ in range(count))
-        return (''.join(filter(lambda v: v, chars)), chars)
+        return (''.join(str(c) for c in chars if c), chars)
 
     def writechar(self, chars):
         self.pending += reversed(chars)
         return self
 
     def emptychar(self):
-        return String.create(self.name, self.number, self.offset, '')
+        return FileString(self.name, self.number, self.offset, '')
 
     def read(self):
         return self.stream.read()
@@ -155,24 +181,16 @@ class WriteStream:
 # -----------------------------------------------------------------------------
 
 
-class CharType(Enum):
-    EOL = 1
-    SPACE = 2
-    WORD = 3
-    QUOTE = 4
-    DQUOTE = 5
-    COMMENT = 6
-    OPDEL = 7
-
-
 class TokenType(Enum):
     EOL = 1
     SPACE = 2
     COMMENT = 3
     WORD = 4
-    COLON = 5
-    OPDEL = 6
-    STRING = 7
+    STRING = 5
+    COLON = 6
+    OPDEL = 7
+    BRACKET_OPEN = 8
+    BRACKET_CLOSE = 9
     ERROR = -1
 
 
@@ -188,7 +206,7 @@ class Token:
                 ')')
 
     def __str__(self):
-        return self.data
+        return str(self.data)
 
     def __len__(self):
         return len(self.data)
@@ -204,6 +222,11 @@ class Token:
 
     def __ne__(self, rhs):
         return not self.__eq__(rhs)
+
+    def getline(self):
+        if isinstance(self.data, FileString):
+            return self.data.line
+        return -1
 
 
 TOKEN_EOL = Token(TokenType.EOL, '\n')
@@ -319,18 +342,34 @@ class Lexer:
     )
 
     OPDELS = {
-        '+', '-', '*', '**', '/', '//', '%', '@',
-        '<<', '>>', '&', '|', '^', '~', ':=',
-        '<', '>', '<=', '>=', '==', '!=',
-
-        '+=', '-=', '*=', '**=', '/=', '//=', '%=', '@=',
-        '<<=', '>>=', '&=', '|=', '^=',
-
-        '->', '...',
-
-        '(', ')', '[', ']', '{', '}',
-
-        '!', '$', ',', '.', ';', '?', '\\', '`',
+        '!': {'!=': {}},
+        '$': {},
+        '%': {'=': {}},
+        '&': {'=': {}},
+        '(': {},
+        ')': {},
+        '*': {'*': {'=': {}}, '=': {}},
+        '+': {'=': {}},
+        ',': {},
+        '-': {'=': {}, '>': {}},
+        '.': {'.': {'.': {}}},
+        '/': {'/': {'=': {}}, '=': {}},
+        ':': {'=': {}},
+        ';': {},
+        '<': {'<': {'=': {}}, '=': {}},
+        '=': {'=': {}},
+        '>': {'=': {'=': {}}, '>': {}},
+        '?': {},
+        '@': {'=': {}},
+        '[': {},
+        '\\': {'\n': {}},
+        ']': {},
+        '^': {'=': {}},
+        '`': {},
+        '{': {},
+        '|': {'=': {}},
+        '}': {},
+        '~': {},
     }
 
     def __init__(self, stream, **option):
@@ -342,13 +381,40 @@ class Lexer:
             '\x7F': self.getword,
         }
         self.char_type.update({chr(c): self.getspace for c in range(33) if c != 10})
-        self.char_type.update({c: self.getword for c in Lexer.WORD_CHAR})
-        self.char_type.update({c[0]: self.getopdel for c in Lexer.OPDELS})
+        self.char_type.update({c: self.getword for c in self.WORD_CHAR})
+        self.char_type.update({c: self.getopdel for c in self.OPDELS})
+
+        self.space_func = {chr(c): self.gettoken_char for c in range(33) if c != 10}
+        self.space_func.update({'\\': self.getspace_escape})
+
+        self.word_func = {c: self.gettoken_char for c in self.WORD_CHAR}
+        self.word_func.update({'\x80': self.gettoken_char})
+
+        self.getline_func = {
+            TokenType.EOL: self.getline_eol,
+            TokenType.BRACKET_OPEN: self.getline_bracket_open,
+            TokenType.BRACKET_CLOSE: self.getline_bracket_close,
+        }
+
+        self.getopdel_func = {':': self.getopdel_colon, '\\\n': self.getspace}
+        self.getopdel_func.update({c: self.getopdel_open for c in self.BRACKET_OPEN})
+        self.getopdel_func.update({c: self.getopdel_close for c in self.BRACKET_CLOSE})
 
         self.debug = option.get('debug', False)
         self.tab_width = option.get('tab', DEFAULT_TAB_WIDTH)
+
         self.stream = stream
+        self.getchar = stream.getchar
+        self.putchar = stream.putchar
+        self.readchar = stream.readchar
+        self.writechar = stream.writechar
+
         self.errors = []
+        self.gettoken_token = None
+
+        self.getline_stack = []
+        self.getline_error = False
+        self.getline_tokens = []
 
     def seterror(self, err):
         self.errors.append(err)
@@ -367,135 +433,144 @@ class Lexer:
         return column
 
     def gettoken(self):
-        char = self.stream.getchar()
+        char = self.getchar()
         return self.char_type[min(char, '\x7F')](char) if char else None
 
     def geteol(self, char):
         return Token(TokenType.EOL, char)
 
+    def gettoken_end(self, char):
+        self.putchar(char)
+        return False
+
+    def gettoken_char(self, char):
+        self.gettoken_token += char
+        return True
+
     def getspace(self, space):
-        stream = self.stream
-        while True:
-            char = stream.getchar()
-            if char is None:
-                return Token(TokenType.SPACE, space)
-            if char == '\n':
+        self.gettoken_token = space
+        fstop = self.gettoken_end
+        for char in iter(self.getchar, None):
+            if not self.space_func.get(char, fstop)(char):
                 break
-            if ord(char) < 33:
-                space += char
-                continue
-            if char != '\\':
-                break
-            space += char
-            next_char = stream.getchar()
-            if ord(next_char) < 33:
-                space += next_char
-                continue
-            stream.putchar(next_char)
-            break
-        stream.putchar(char)
-        return Token(TokenType.SPACE, space)
+        return Token(TokenType.SPACE, self.gettoken_token)
+
+    def getspace_escape(self, char):
+        next_char = self.getchar()
+        if next_char is None:
+            self.gettoken_token += char
+            return False
+        if ord(next_char) < 33:
+            self.gettoken_token += char + next_char
+            return True
+        self.writechar((char, next_char))
+        return False
 
     def getword(self, word):
-        word_char = self.WORD_CHAR
-        stream = self.stream
-        for char in iter(stream.getchar, None):
-            if char not in word_char and ord(char) < 0x80:
-                stream.putchar(char)
+        self.gettoken_token = word
+        fstop = self.gettoken_end
+        for char in iter(self.getchar, None):
+            if not self.word_func.get(min(char, '\x80'), fstop)(char):
                 break
-            word += char
-        return Token(TokenType.WORD, word)
+        return Token(TokenType.WORD, self.gettoken_token)
 
     def getquote(self, qstr):
-        stream = self.stream
-        escape = False
         qch = str(qstr)
-        for char in iter(stream.getchar, None):
-            if escape:
-                qstr += char
-                escape = False
-                continue
+        for char in iter(self.getchar, None):
             if char == '\n':
-                stream.putchar(char)
+                self.putchar(char)
                 break
             qstr += char
-            if char == '\\':
-                escape = True
-                continue
             if char == qch:
                 break
+            if char != '\\':
+                continue
+            char = self.getchar()
+            if char is None:
+                break
+            qstr += char
         return Token(TokenType.STRING, qstr)
 
     def getdquote(self, char):
-        next_str, next_chars = self.stream.readchar(2)
+        next_str, next_chars = self.readchar(2)
         if next_str == '""':
             return self.getlongquote(char + next_str)
-        self.stream.writechar(next_chars)
+        self.writechar(next_chars)
         return self.getquote(char)
 
     def getlongquote(self, qstr):
-        stream = self.stream
-        for char in iter(stream.getchar, None):
+        for char in iter(self.getchar, None):
             if char == '"':
-                next_str, next_chars = stream.readchar(2)
+                next_str, next_chars = self.readchar(2)
                 if next_str == '""':
                     qstr += '"""'
                     break
-                stream.writechar(next_chars)
+                self.writechar(next_chars)
             qstr += char
         return Token(TokenType.STRING, qstr)
 
     def getcomment(self, cstr):
-        stream = self.stream
-        for char in iter(stream.getchar, None):
+        for char in iter(self.getchar, None):
             if char == '\n':
-                stream.putchar(char)
+                self.putchar(char)
                 break
             cstr += char
         return Token(TokenType.COMMENT, cstr)
 
     def getopdel(self, char):
-        next_str, next_chars = self.stream.readchar(2)
-        if len(next_str) > 1:
-            check_str = char + next_str
-            if check_str in self.OPDELS:
-                return Token(TokenType.OPDEL, check_str)
-            self.stream.putchar(next_chars[1])
-        if next_str:
-            check_str = char + next_str[0]
-            if check_str in self.OPDELS:
-                return Token(TokenType.OPDEL, check_str)
-            if check_str == '\\\n':
-                return self.getspace(check_str)
-            self.stream.putchar(next_chars[0])
-        if char == ':':
-            return Token(TokenType.COLON, char)
-        return Token(TokenType.OPDEL, char)
+        opdel = char
+        cmap = self.OPDELS[char]
+        if cmap:
+            nchar = None
+            for nchar in iter(self.getchar, None):
+                opdelc = opdel + nchar
+                cmap = cmap.get(opdelc)
+                if not cmap:
+                    break
+                opdel = opdelc
+            if nchar:
+                self.putchar(nchar)
+        return self.getopdel_func.get(opdel, self.getopdel_opdel)(opdel)
+
+    def getopdel_opdel(self, opdel):
+        return Token(TokenType.OPDEL, opdel)
+
+    def getopdel_open(self, opdel):
+        return Token(TokenType.BRACKET_OPEN, opdel)
+
+    def getopdel_close(self, opdel):
+        return Token(TokenType.BRACKET_CLOSE, opdel)
+
+    def getopdel_colon(self, opdel):
+        return Token(TokenType.COLON, opdel)
 
     def getline(self):
-        error = False
-        tokens = []
-        stack = []
+        self.getline_stack = []
+        self.getline_tokens = []
+        self.getline_error = False
         for token in iter(self.gettoken, None):
-            tokens.append(token)
-            if token == TokenType.EOL:
-                if stack:
-                    continue
+            self.getline_tokens.append(token)
+            func = self.getline_func.get(token.type)
+            if func and not func(token):
                 break
-            char = token.data
-            if char in self.BRACKET_OPEN:
-                stack.append(self.BRACKET_OPEN[char])
-                continue
-            if char in self.BRACKET_CLOSE:
-                if not stack or char != stack.pop():
-                    self.seterror((char, "error: unmatched parentheses/bracket"))
-                    error = True
-                continue
-        if not tokens:
+        if not self.getline_tokens:
             return None
-        if error:
-            tokens.insert(0, Token(TokenType.ERROR))
-        return tokens
+        if self.getline_error:
+            self.getline_tokens.insert(0, Token(TokenType.ERROR))
+        return self.getline_tokens
+
+    def getline_eol(self, _token):
+        return self.getline_stack
+
+    def getline_bracket_open(self, token):
+        self.getline_stack.append(self.BRACKET_OPEN[token.data])
+        return True
+
+    def getline_bracket_close(self, token):
+        if not self.getline_stack or token.data != self.getline_stack.pop():
+            self.seterror((token.data, "error: unmatched parentheses/bracket"))
+            self.getline_error = True
+        return True
 
 
 class Parser(Lexer):
@@ -566,14 +641,17 @@ class Parser(Lexer):
 
     def nextline(self, tokens):
         token = tokens[0]
-        status = LineStatus(tokens, token.data.line)
+        error = False
+        if token == TokenType.ERROR:
+            tokens.pop(0)
+            token = tokens[0]
+            error = True
+        status = LineStatus(tokens, token.getline())
+        status.error = error
         if token == TokenType.SPACE:
             status.indent = self.getcolumn(token.data)
             self.add_indent(status.indent, token.data)
             token = None if len(tokens) < 2 else tokens[1]
-        elif token == TokenType.ERROR:
-            status.error = True
-            return status
         if token:
             if token == TokenType.COMMENT:
                 status.comment = True
@@ -635,8 +713,7 @@ class Parser(Lexer):
     def parse_block_statement(self, status):
         self.block.statement += 1
         status.statement = self.block.statement
-        if self.error or status.error:
-            self.error = True
+        if self.error:
             return False
         if status.keyword_block:
             self.set_block_enter(status)
@@ -722,7 +799,8 @@ class Parser(Lexer):
                   f':{self.line[block.line_start].keyword_block} -> {keyword}')
 
         line = self.line[line_number]
-        if block.indent_block < line.indent or not line.keyword_end:
+        if not line.error and (
+                block.indent_block < line.indent or not line.keyword_end):
             indent = block.indent_block
             if line_number == block.line_start:
                 indent += self.indent_depth
@@ -734,7 +812,7 @@ class Parser(Lexer):
             status.number = line_number
             self.line.insert(status.number, status)
 
-        if self.classdefnl:
+        if not line.error and self.classdefnl:
             newline = self.append_newline
             self.append_newline = False
             if block.keyword == 'class':
@@ -777,10 +855,12 @@ class Parser(Lexer):
                 if (line.indent <= block.indent_start or
                     block.indent_block < line.indent or
                     line.comment or line.statement < 2 or
-                    not line.keyword_end):
+                        not line.keyword_end):
                     break
-                if (block.keyword not in self.remove_keyword_map[line.keyword_end] or
-                    line.keyword_end != line.getline().strip()):
+                block_keyword = block.keyword.data
+                line_keyword = line.keyword_end.data
+                if (block_keyword not in self.remove_keyword_map[line_keyword]
+                        or line_keyword != line.getline().strip()):
                     break
             line.setempty()
             remove_empty = True
@@ -841,9 +921,9 @@ if __name__ == '__main__':
                             debug_remove=args.debug_remove or args.debug,
                             debug=args.debug)
 
-        if parser.error and args.error_stop:
-            for error, msg in parser.errors:
-                sys.stderr.write(f'{error.name}:{error.line}: {msg}\n')
+        if parser.errors and (args.debug or args.error_stop):
+            for error in parser.errors:
+                sys.stderr.write(f'{error[0].name}:{error[0].line}: {error[1]}\n')
             if args.error_stop:
                 sys.exit(2)
 
