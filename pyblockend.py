@@ -555,7 +555,7 @@ class Lexer:
                 break
         if not self.getline_tokens:
             return None
-        if self.getline_error:
+        if self.getline_error or self.getline_stack:
             self.getline_tokens.insert(0, Token(TokenType.ERROR))
         return self.getline_tokens
 
