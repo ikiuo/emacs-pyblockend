@@ -694,7 +694,7 @@ class Parser(Lexer):
                 continue
 
             if status.indent == self.last_indent:
-                if not self.block.statement and status.keyword_block:
+                if not self.block.statement:
                     self.set_block_leave(status.number)
                 self.parse_block_statement(status)
             elif status.indent > self.last_indent:
@@ -704,6 +704,7 @@ class Parser(Lexer):
 
         if self.block_enter:
             self.push_block(self.block_enter)
+            self.block.indent_block = self.last_indent
 
         line_number = len(self.line)
         while self.set_block_leave(line_number):
@@ -803,7 +804,7 @@ class Parser(Lexer):
                 block.indent_block < line.indent or not line.keyword_end):
             indent = block.indent_block
             if line_number == block.line_start:
-                indent += self.indent_depth
+                indent = block.indent_start + self.indent_depth
             line_number += 1
             token = [Token(TokenType.SPACE, self.get_indent_space(indent)),
                      Token(TokenType.WORD, keyword),
@@ -818,7 +819,8 @@ class Parser(Lexer):
             if block.keyword == 'class':
                 self.append_newline = True
             elif (newline and block.keyword == 'def' and
-                  self.line[line_number + 1].getline().strip()):
+                  ((line_number + 1) < len(self.line) and
+                   self.line[line_number + 1].getline().strip())):
                 line_number += 1
                 status = LineStatus([TOKEN_EOL], line.source_line)
                 status.number = line_number
