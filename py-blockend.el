@@ -196,7 +196,7 @@
   (let* ((ilines (split-string input "\n")) (ilen (length ilines))
          (olines (split-string output "\n")) (olen (length olines))
          (diff (- ilen olen)) (ipos 0) (opos 0)
-         iline oline lmap)
+         iline oline lmap (mlines 0))
     (when update (goto-char update) (beginning-of-line))
     (while (or (< ipos ilen) (< opos olen))
       (setq lmap (append (list (cons ipos opos)) lmap))
@@ -204,14 +204,22 @@
       (setq oline (nth opos olines))
       (cond
        ((string= iline oline)
-        (when update (line-move 1 t) (beginning-of-line))
+        (when update (setq mlines (1+ mlines)))
         (setq ipos (1+ ipos))
         (setq opos (1+ opos)))
        ((> diff 0)
-        (when update (delete-line) (beginning-of-line))
+        (when update
+          (when (> mlines 0)
+            (unless (line-move mlines t) (goto-char (point-max)))
+            (beginning-of-line))
+          (delete-line) (beginning-of-line) (setq mlines 0))
         (setq ipos (1+ ipos)))
        ((< diff 0)
-        (when update (insert oline "\n"))
+        (when update
+          (when (> mlines 0)
+            (unless (line-move mlines t) (goto-char (point-max)))
+            (beginning-of-line))
+          (insert oline "\n") (setq mlines 0))
         (setq opos (1+ opos)))))
     (append (list (cons ipos opos)) lmap)))
 
@@ -235,7 +243,8 @@
 
 ;; ----------------------------------------------------------------------------
 
-(defvar py-blockend--hook-temporary nil)
+(defvar-local py-blockend--mode-enable nil)
+(defvar-local py-blockend--hook-temporary nil)
 
 (defun py-blockend--next-error-hook ()
   (py-blockend-goto-line (line-number-at-pos)))
@@ -273,8 +282,6 @@
   :global nil
   :keymap nil
   :lighter py-blockend-minor-mode-line
-
-  (make-variable-buffer-local 'py-blockend--mode-enable)
 
   (cond
    ((and py-blockend-global
