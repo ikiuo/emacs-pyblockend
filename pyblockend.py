@@ -938,8 +938,11 @@ if __name__ == '__main__':
         if args.debug and args.outfile == '.':
             return
 
+        source = parser.getsource()
+        if args.remove and not args.append:
+            source = source.rstrip() + '\n'
         with WriteStream(args.outfile) as stream:
-            stream.write(parser.getsource())
+            stream.write(source)
 
     main()
 

@@ -192,9 +192,17 @@
         (add-to-list 'wdata (list win wpos wline bpos rline cols) t nil)))
     wdata))
 
+(defun py-blockend--split-lines (text)
+  (let ((lines (reverse (split-string text "\n"))))
+    (reverse
+     (if (and (> (length lines) 0)
+              (eq (length (car lines)) 0))
+         (cdr lines)
+       lines))))
+
 (defun py-blockend--compare-lines (input output &optional update)
-  (let* ((ilines (split-string input "\n")) (ilen (length ilines))
-         (olines (split-string output "\n")) (olen (length olines))
+  (let* ((ilines (py-blockend--split-lines input)) (ilen (length ilines))
+         (olines (py-blockend--split-lines output)) (olen (length olines))
          (diff (- ilen olen)) (ipos 0) (opos 0)
          iline oline lmap (mlines 0))
     (when update (goto-char update) (beginning-of-line))
