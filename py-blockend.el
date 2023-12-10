@@ -32,6 +32,12 @@
 
 ;; ----------------------------------------------------------------------------
 
+(defvar py-blockend--emacs-version
+  (let (v s (l (split-string emacs-version "\\.")) ver s)
+    (dolist (s l) (add-to-list 'v (string-to-number s) t)) v))
+(defvar py-blockend--emacs-major (car py-blockend--emacs-version))
+(defvar py-blockend--emacs-minor (nth 1 py-blockend--emacs-version))
+
 (defvar py-blockend--temporary-buffer-name " *py-blockend-temporary*")
 
 ;; ----------------------------------------------------------------------------
@@ -116,9 +122,14 @@
 
 ;; ----------------------------------------------------------------------------
 
+(defun py-blockend--new-buffer ()
+  (if (< py-blockend--emacs-major 28)
+      (generate-new-buffer py-blockend--temporary-buffer-name)
+    (generate-new-buffer py-blockend--temporary-buffer-name t)))
+
 (defun py-blockend--execute-command (command beg end)
   (let ((curr (current-buffer))
-        (targ (generate-new-buffer py-blockend--temporary-buffer-name t))
+        (targ (py-blockend--new-buffer))
         exit output)
     (setq exit (call-shell-region beg end command nil targ))
     (set-buffer targ) (setq output (buffer-string))
@@ -178,6 +189,12 @@
 
 ;; ----------------------------------------------------------------------------
 
+(if (functionp 'delete-line)
+    (fset 'py-blockend--delete-line 'delete-line)
+  (defun py-blockend--delete-line ()
+    (delete-region (line-beginning-position)
+                   (min (1+ (line-end-position)) (point-max)))))
+
 (defun py-blockend--update-prepare (beg end)
   (let ((wins (py-blockend--window-start-and-point))
         wdata wp win wpos wline bpos rline cols lpos)
@@ -220,7 +237,7 @@
           (when (> mlines 0)
             (unless (line-move mlines t) (goto-char (point-max)))
             (beginning-of-line))
-          (delete-line) (beginning-of-line) (setq mlines 0))
+          (py-blockend--delete-line) (beginning-of-line) (setq mlines 0))
         (setq ipos (1+ ipos)))
        ((< diff 0)
         (when update
