@@ -32,11 +32,9 @@
 
 ;; ----------------------------------------------------------------------------
 
-(defvar py-blockend--emacs-version
-  (let (v s (l (split-string emacs-version "\\.")) ver s)
-    (dolist (s l) (add-to-list 'v (string-to-number s) t)) v))
-(defvar py-blockend--emacs-major (car py-blockend--emacs-version))
-(defvar py-blockend--emacs-minor (nth 1 py-blockend--emacs-version))
+(defvar py-blockend--emacs-version '(emacs-major-version emacs-minor-version))
+(defvar py-blockend--emacs-major emacs-major-version)
+(defvar py-blockend--emacs-minor emacs-minor-version)
 
 (defvar py-blockend--temporary-buffer-name " *py-blockend-temporary*")
 
